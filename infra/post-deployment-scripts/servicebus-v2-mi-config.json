@@ -1,0 +1,17 @@
+{
+    "properties": {
+        "displayName": "Service Bus V2 Managed Identity",
+        "api": {
+            "id": "/subscriptions/d201ebeb-c470-4a6f-82d5-c2f95bb0dc1e/providers/Microsoft.Web/locations/eastus2/managedApis/servicebus"
+        },
+        "parameterValueSet": {
+            "name": "managedIdentityAuth",
+            "values": {
+                "namespaceEndpoint": {
+                    "value": "sb://ai-rate-lock-dev-t6eaj464kxjt2-servicebus.servicebus.windows.net/"
+                }
+            }
+        }
+    },
+    "location": "eastus2"
+}

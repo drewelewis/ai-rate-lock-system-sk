@@ -1,0 +1,53 @@
+{
+    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+    "contentVersion": "1.0.0.0",
+    "actions": {
+        "Send_message_to_Service_Bus": {
+            "type": "ApiConnection",
+            "inputs": {
+                "host": {
+                    "connection": {
+                        "name": "@parameters('$connections')['servicebus']['connectionId']"
+                    }
+                },
+                "method": "post",
+                "body": {
+                    "ContentData": "@{base64(json(concat('{\"message_type\":\"new_email_request\", \"loan_application_id\": \"', triggerBody()?['subject'], '\", \"email_body\": \"', triggerBody()?['body'], '\", \"from_address\": \"', triggerBody()?['from'], '\"}')))}",
+                    "ContentType": "application/json"
+                },
+                "path": "/@{encodeURIComponent(encodeURIComponent('inbound-email-queue'))}/messages"
+            },
+            "runAfter": {}
+        }
+    },
+    "triggers": {
+        "When_a_new_email_arrives": {
+            "type": "ApiConnection",
+            "inputs": {
+                "host": {
+                    "connection": {
+                        "name": "@parameters('$connections')['office365']['connectionId']"
+                    }
+                },
+                "method": "get",
+                "path": "/onnewemail",
+                "queries": {
+                    "folderPath": "Inbox",
+                    "importance": "Any",
+                    "includeAttachments": false
+                }
+            },
+            "recurrence": {
+                "frequency": "Minute",
+                "interval": 1
+            },
+            "splitOn": "@triggerBody()?['value']"
+        }
+    },
+    "parameters": {
+        "$connections": {
+            "defaultValue": {},
+            "type": "Object"
+        }
+    }
+}

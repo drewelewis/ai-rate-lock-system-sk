@@ -1,0 +1,25 @@
+version: '3.8'
+
+# Simple development setup - using only cloud services
+# No local containers needed initially
+
+# Uncomment Redis below if you need local caching later
+# services:
+#   redis:
+#     image: redis:7-alpine
+#     container_name: rate-lock-redis
+#     command: redis-server --appendonly yes
+#     ports:
+#       - "6379:6379"
+#     volumes:
+#       - redis-data:/data
+#     networks:
+#       - rate-lock-network
+#     restart: unless-stopped
+
+# volumes:
+#   redis-data:
+
+# networks:
+#   rate-lock-network:
+#     driver: bridge

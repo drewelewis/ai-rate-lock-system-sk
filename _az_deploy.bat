@@ -1,0 +1,1 @@
+az deployment group create --resource-group rg-ai-rate-lock-dev --template-file .\infra\main.bicep --parameters .\infra\main.bicepparam

@@ -1,0 +1,88 @@
+{
+    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+    "contentVersion": "1.0.0.0",
+    "actions": {
+        "Parse_JSON": {
+            "type": "ParseJson",
+            "inputs": {
+                "content": "@triggerBody()?['ContentData']",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "recipient_email": {
+                            "type": "string"
+                        },
+                        "subject": {
+                            "type": "string"
+                        },
+                        "body": {
+                            "type": "string"
+                        },
+                        "attachments": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "Name": {
+                                        "type": "string"
+                                    },
+                                    "ContentBytes": {
+                                        "type": "string"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "runAfter": {}
+        },
+        "Send_an_email_(V2)": {
+            "type": "ApiConnection",
+            "inputs": {
+                "host": {
+                    "connection": {
+                        "name": "@parameters('$connections')['office365']['connectionId']"
+                    }
+                },
+                "method": "post",
+                "body": {
+                    "To": "@body('Parse_JSON')?['recipient_email']",
+                    "Subject": "@body('Parse_JSON')?['subject']",
+                    "Body": "@body('Parse_JSON')?['body']",
+                    "Attachments": "@body('Parse_JSON')?['attachments']"
+                },
+                "path": "/v2/Mail"
+            },
+            "runAfter": {
+                "Parse_JSON": [
+                    "Succeeded"
+                ]
+            }
+        }
+    },
+    "triggers": {
+        "When_a_message_is_received_in_a_Service_Bus_queue_(peek-lock)": {
+            "type": "ApiConnection",
+            "inputs": {
+                "host": {
+                    "connection": {
+                        "name": "@parameters('$connections')['servicebus']['connectionId']"
+                    }
+                },
+                "method": "get",
+                "path": "/@{encodeURIComponent(encodeURIComponent('outbound-email-queue'))}/messages/head"
+            },
+            "recurrence": {
+                "frequency": "Minute",
+                "interval": 1
+            }
+        }
+    },
+    "parameters": {
+        "$connections": {
+            "defaultValue": {},
+            "type": "Object"
+        }
+    }
+}

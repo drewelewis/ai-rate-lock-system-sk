@@ -1,0 +1,856 @@
+"""
+Service Bus Operations
+Handles all interactions with Azure Service Bus for messaging.
+"""
+
+import os
+import json
+import email
+from email import policy
+from datetime import datetime
+from typing import Dict, Any, List, Optional
+import asyncio
+from azure.servicebus.aio import ServiceBusClient
+from azure.servicebus import ServiceBusMessage
+from azure.identity.aio import DefaultAzureCredential
+from utils.logger import console_info, console_debug, console_warning, console_error, console_telemetry_event
+from config.azure_config import AzureConfig
+
+class ServiceBusOperations:
+    def __init__(self):
+        """
+        Initialize the ServiceBusOperations class.
+        """
+        self.azure_config = AzureConfig()
+        self.servicebus_namespace = self.azure_config.get_servicebus_namespace()
+        self.credential = None
+        self.client = None
+        self._active_credentials = []  # Track active credentials for cleanup
+        
+        # Load topic and queue names from Azure configuration
+        self.queues = {
+            'inbound_email': self.azure_config.get_servicebus_queue_inbound_email(),
+            'outbound_confirmations': self.azure_config.get_servicebus_queue_outbound_confirmations(),
+            'high_priority_exceptions': self.azure_config.get_servicebus_queue_high_priority_exceptions()
+        }
+        
+        self.topics = {
+            'loan_lifecycle': self.azure_config.get_servicebus_topic_loan_lifecycle(),
+            'audit_events': self.azure_config.get_servicebus_topic_audit_events(),
+            'compliance_events': self.azure_config.get_servicebus_topic_compliance_events(),
+            'exception_alerts': self.azure_config.get_servicebus_topic_exception_alerts()
+        }
+        
+        console_info(f"Service Bus Operations initialized for namespace: {self.servicebus_namespace}", "ServiceBusOps")
+
+    def _parse_email_content(self, raw_content: str) -> Dict[str, Any]:
+        """
+        Parse email content using Python's built-in email module.
+        
+        Args:
+            raw_content (str): Raw email content
+            
+        Returns:
+            Dict[str, Any]: Parsed email data
+        """
+        try:
+            # Parse with modern EmailMessage API for unicode support
+            msg = email.message_from_string(raw_content, policy=policy.default)
+            
+            parsed_email = {
+                'subject': msg.get('Subject', ''),
+                'from': msg.get('From', ''),
+                'to': msg.get('To', ''),
+                'cc': msg.get('Cc', ''),
+                'date': msg.get('Date', ''),
+                'message_id': msg.get('Message-ID', ''),
+                'body_text': None,
+                'body_html': None,
+                'attachments': [],
+                'headers': dict(msg.items())
+            }
+            
+            # Extract body content and attachments
+            if msg.is_multipart():
+                for part in msg.walk():
+                    content_type = part.get_content_type()
+                    content_disposition = part.get_content_disposition()
+                    
+                    if content_type == 'text/plain' and not parsed_email['body_text']:
+                        parsed_email['body_text'] = part.get_content()
+                    elif content_type == 'text/html' and not parsed_email['body_html']:
+                        parsed_email['body_html'] = part.get_content()
+                    elif content_disposition == 'attachment':
+                        parsed_email['attachments'].append({
+                            'filename': part.get_filename(),
+                            'content_type': content_type,
+                            'size': len(part.get_payload(decode=True) or b''),
+                            'content_id': part.get('Content-ID', '')
+                        })
+            else:
+                # Single part message
+                content_type = msg.get_content_type()
+                if content_type == 'text/plain':
+                    parsed_email['body_text'] = msg.get_content()
+                elif content_type == 'text/html':
+                    parsed_email['body_html'] = msg.get_content()
+            
+            console_info(f"Successfully parsed email with subject: {parsed_email['subject'][:50]}...", "ServiceBusOps")
+            return parsed_email
+            
+        except Exception as e:
+            console_warning(f"Failed to parse email content: {e}", "ServiceBusOps")
+            return {
+                'error': f'Failed to parse email: {e}',
+                'raw_content': raw_content[:500],  # First 500 chars for debugging
+                'parsed': False
+            }
+
+    def _looks_like_email(self, content: str) -> bool:
+        """
+        Simple heuristic to detect if content looks like an email message.
+        
+        Args:
+            content (str): Content to check
+            
+        Returns:
+            bool: True if content appears to be an email
+        """
+        if not content or len(content) < 50:
+            return False
+        
+        # Check for common email headers
+        email_indicators = [
+            'From:', 'To:', 'Subject:', 'Date:',
+            'Message-ID:', 'Return-Path:', 'Received:',
+            'Content-Type:', 'MIME-Version:'
+        ]
+        
+        # Convert to lowercase for case-insensitive matching
+        content_lower = content.lower()
+        
+        # Count how many email indicators we find
+        indicator_count = sum(1 for indicator in email_indicators 
+                            if indicator.lower() in content_lower)
+        
+        # If we find at least 3 email headers, it's likely an email
+        return indicator_count >= 3
+
+    async def _get_servicebus_client(self):
+        """
+        Get or create Service Bus client with proper authentication.
+        Creates a new client instance each time to avoid connection issues.
+        Returns both the client and credential for proper cleanup.
+        """
+        try:
+            if not self.servicebus_namespace:
+                raise ValueError("AZURE_SERVICEBUS_NAMESPACE_NAME environment variable is required")
+            
+            # Always create a fresh credential and client for each operation
+            # This avoids the connection handler issues we were seeing
+            credential = DefaultAzureCredential()
+            self._active_credentials.append(credential)  # Track for cleanup
+            fully_qualified_namespace = f"{self.servicebus_namespace}.servicebus.windows.net"
+            client = ServiceBusClient(fully_qualified_namespace, credential)
+            
+            console_debug("Service Bus client created successfully", "ServiceBusOps")
+            return client, credential
+            
+        except Exception as e:
+            console_error(f"Failed to create Service Bus client: {e}", "ServiceBusOps")
+            raise
+
+    async def send_message(self, destination_name: str, message_body: str, correlation_id: Optional[str] = None, destination_type: str = 'topic') -> bool:
+        """
+        Send a message to a specific Service Bus topic or queue.
+        
+        Args:
+            destination_name (str): The logical name of the topic or queue to send the message to.
+            message_body (str): The message payload as raw text.
+            correlation_id (str, optional): A correlation ID for tracking.
+            destination_type (str): Either 'topic' or 'queue'
+            
+        Returns:
+            bool: True if successful, False otherwise.
+        """
+        try:
+            client, credential = await self._get_servicebus_client()
+            
+            if destination_type == 'topic':
+                actual_destination_name = self.topics.get(destination_name)
+                if not actual_destination_name:
+                    raise ValueError(f"Topic '{destination_name}' not found in configuration.")
+                sender_method = client.get_topic_sender
+            elif destination_type == 'queue':
+                actual_destination_name = self.queues.get(destination_name)
+                if not actual_destination_name:
+                    raise ValueError(f"Queue '{destination_name}' not found in configuration.")
+                sender_method = client.get_queue_sender
+            else:
+                raise ValueError(f"Invalid destination_type: {destination_type}. Use 'topic' or 'queue'.")
+
+            if destination_type == 'topic':
+                sender = sender_method(topic_name=actual_destination_name)
+            else:
+                sender = sender_method(queue_name=actual_destination_name)
+                
+            async with client, sender:
+                # Send raw string content directly
+                message_to_send = ServiceBusMessage(
+                    body=message_body,
+                    content_type="text/plain",
+                    correlation_id=correlation_id
+                )
+                await sender.send_messages(message_to_send)
+            
+            # Explicitly close the credential to clean up HTTP sessions
+            await credential.close()
+            # Remove from active tracking
+            if credential in self._active_credentials:
+                self._active_credentials.remove(credential)
+            
+            console_info(f"Message sent to {destination_type} '{actual_destination_name}'", "ServiceBusOps")
+            console_telemetry_event("message_sent", {
+                "destination": actual_destination_name,
+                "destination_type": destination_type,
+                "correlation_id": correlation_id,
+                "message_type": "raw_text"
+            }, "ServiceBusOps")
+            
+            return True
+
+        except Exception as e:
+            console_error(f"Failed to send message to {destination_type} '{destination_name}': {e}", "ServiceBusOps")
+            return False
+
+    async def receive_messages(self, topic_name: str, subscription_name: str, max_wait_time: int = 5) -> List[Dict[str, Any]]:
+        """
+        Receive messages from a Service Bus topic subscription.
+        
+        DEPRECATED: Use listen_to_subscription() for event-driven message processing.
+        This polling method is kept for backward compatibility only.
+        
+        Args:
+            topic_name: Logical name of the topic or actual topic name
+            subscription_name: Name of the subscription
+            max_wait_time: Maximum time to wait for messages in seconds
+            
+        Returns:
+            List of received messages as dictionaries
+        """
+        try:
+            client, credential = await self._get_servicebus_client()
+            
+            # Check if topic_name is a logical name in our mapping, otherwise use as-is
+            actual_topic_name = self.topics.get(topic_name, topic_name)
+            
+            # More visible polling indicator
+            console_info(f"🔍 Polling {actual_topic_name}/{subscription_name} for messages (timeout: {max_wait_time}s)", "ServiceBusOps")
+            
+            receiver = client.get_subscription_receiver(
+                topic_name=actual_topic_name,
+                subscription_name=subscription_name
+            )
+            
+            async with client, receiver:
+                received_msgs = await receiver.receive_messages(max_wait_time=max_wait_time)
+                
+                if not received_msgs:
+                    console_debug(f"📭 No messages found in {actual_topic_name}/{subscription_name}", "ServiceBusOps")
+                    return []
+                
+                console_info(f"📨 Found {len(received_msgs)} message(s) in {actual_topic_name}/{subscription_name}", "ServiceBusOps")
+                
+                messages = []
+                
+                for msg in received_msgs:
+                    try:
+                        # Parse message body - FIXED: properly extract content from generator
+                        if msg.body:
+                            # Handle generator objects properly
+                            if hasattr(msg.body, '__iter__') and not isinstance(msg.body, (str, bytes)):
+                                try:
+                                    # Convert generator to actual content
+                                    body_parts = list(msg.body)
+                                    body_str = ''.join(part.decode('utf-8') if isinstance(part, bytes) else str(part) for part in body_parts)
+                                except Exception as e:
+                                    console_warning(f"Failed to extract body from generator: {e}, falling back to str()", "ServiceBusOps")
+                                    body_str = str(msg.body)
+                            else:
+                                body_str = msg.body.decode('utf-8') if isinstance(msg.body, bytes) else str(msg.body)
+                        else:
+                            body_str = ""
+                        
+                        if body_str:
+                            try:
+                                parsed_body = json.loads(body_str)
+                            except json.JSONDecodeError:
+                                # If not JSON, treat as plain text
+                                console_warning(f"Message {msg.message_id} body is not JSON, treating as text", "ServiceBusOps")
+                                parsed_body = {"raw_content": body_str}
+                        else:
+                            console_warning(f"Message {msg.message_id} has empty body", "ServiceBusOps")
+                            parsed_body = {"raw_content": ""}
+                        
+                        # Parse message body
+                        message_dict = {
+                            'body': parsed_body,
+                            'content_type': msg.content_type,
+                            'correlation_id': msg.correlation_id,
+                            'message_id': msg.message_id,
+                            'properties': dict(msg.application_properties) if msg.application_properties else {},
+                            'delivery_count': msg.delivery_count,
+                            'enqueued_time': msg.enqueued_time_utc.isoformat() if msg.enqueued_time_utc else None
+                        }
+                        messages.append(message_dict)
+                        
+                        # Complete the message to remove it from the queue
+                        await receiver.complete_message(msg)
+                        console_info(f"Completed message {msg.message_id} from {topic_name}/{subscription_name}", "ServiceBusOps")
+                        
+                    except Exception as msg_error:
+                        console_error(f"Error processing message {msg.message_id}: {msg_error}", "ServiceBusOps")
+                        # Abandon the message so it can be retried
+                        await receiver.abandon_message(msg)
+                
+                if messages:
+                    console_info(f"Received {len(messages)} messages from {topic_name}/{subscription_name}", "ServiceBusOps")
+                
+                # Explicitly close the credential to clean up HTTP sessions
+                await credential.close()
+                # Remove from active tracking
+                if credential in self._active_credentials:
+                    self._active_credentials.remove(credential)
+                return messages
+            
+        except Exception as e:
+            console_warning(f"Error receiving messages from {topic_name}/{subscription_name}: {e}", "ServiceBusOps")
+            # Clean up credential even on error
+            try:
+                await credential.close()
+                if credential in self._active_credentials:
+                    self._active_credentials.remove(credential)
+            except:
+                pass
+            return []
+
+    async def listen_to_subscription(self, topic_name: str, subscription_name: str, message_handler, stop_event: asyncio.Event):
+        """
+        Event-driven message listener for Service Bus topic subscriptions.
+        Blocks until messages arrive (no polling delay) and processes them via callback.
+        
+        Args:
+            topic_name: Logical name of the topic or actual topic name
+            subscription_name: Name of the subscription
+            message_handler: Async callback function to process each message (receives message dict)
+            stop_event: asyncio.Event to signal when to stop listening
+            
+        Raises:
+            Exception: If receiver setup or message processing fails critically
+        """
+        client = None
+        credential = None
+        receiver = None
+        
+        try:
+            # Get Service Bus client and credential
+            client, credential = await self._get_servicebus_client()
+            
+            # Resolve logical topic name to actual name
+            actual_topic_name = self.topics.get(topic_name, topic_name)
+            
+            console_info(f"🎧 Starting event-driven listener for {actual_topic_name}/{subscription_name}", "ServiceBusOps")
+            
+            # Create receiver for the subscription
+            receiver = client.get_subscription_receiver(
+                topic_name=actual_topic_name,
+                subscription_name=subscription_name,
+                max_wait_time=60  # Wait up to 60 seconds per receive call
+            )
+            
+            # Event-driven message processing loop
+            async with receiver:
+                while not stop_event.is_set():
+                    try:
+                        # Receive messages (blocks until messages arrive or timeout)
+                        received_msgs = await receiver.receive_messages(max_wait_time=60, max_message_count=10)
+                        
+                        if not received_msgs:
+                            # Timeout reached, check stop_event and continue
+                            continue
+                        
+                        console_info(f"📨 Received {len(received_msgs)} message(s) from {actual_topic_name}/{subscription_name}", "ServiceBusOps")
+                        
+                        # Process each message
+                        for msg in received_msgs:
+                            if stop_event.is_set():
+                                # Stop requested, abandon remaining messages
+                                await receiver.abandon_message(msg)
+                                continue
+                            
+                            try:
+                                # Parse message body
+                                if msg.body:
+                                    if hasattr(msg.body, '__iter__') and not isinstance(msg.body, (str, bytes)):
+                                        body_parts = list(msg.body)
+                                        body_str = ''.join(part.decode('utf-8') if isinstance(part, bytes) else str(part) for part in body_parts)
+                                    else:
+                                        body_str = msg.body.decode('utf-8') if isinstance(msg.body, bytes) else str(msg.body)
+                                else:
+                                    body_str = ""
+                                
+                                # Try to parse as JSON, fall back to text
+                                if body_str:
+                                    try:
+                                        parsed_body = json.loads(body_str)
+                                    except json.JSONDecodeError:
+                                        parsed_body = {"raw_content": body_str}
+                                else:
+                                    parsed_body = {"raw_content": ""}
+                                
+                                # Create message dict
+                                message_dict = {
+                                    'body': parsed_body,
+                                    'content_type': msg.content_type,
+                                    'correlation_id': msg.correlation_id,
+                                    'message_id': msg.message_id,
+                                    'properties': dict(msg.application_properties) if msg.application_properties else {},
+                                    'delivery_count': msg.delivery_count,
+                                    'enqueued_time': msg.enqueued_time_utc.isoformat() if msg.enqueued_time_utc else None
+                                }
+                                
+                                # Call the message handler
+                                await message_handler(message_dict)
+                                
+                                # Complete the message (removes from queue)
+                                await receiver.complete_message(msg)
+                                console_debug(f"✅ Completed message {msg.message_id}", "ServiceBusOps")
+                                
+                            except Exception as msg_error:
+                                console_error(f"❌ Error processing message {msg.message_id}: {msg_error}", "ServiceBusOps")
+                                # Abandon message so it can be retried
+                                await receiver.abandon_message(msg)
+                    
+                    except asyncio.CancelledError:
+                        console_info(f"🛑 Listener for {actual_topic_name}/{subscription_name} cancelled", "ServiceBusOps")
+                        break
+                    except Exception as receive_error:
+                        console_error(f"❌ Error receiving messages from {actual_topic_name}/{subscription_name}: {receive_error}", "ServiceBusOps")
+                        # Wait a bit before retrying to avoid tight error loops
+                        await asyncio.sleep(5)
+            
+            console_info(f"🔚 Stopped listening to {actual_topic_name}/{subscription_name}", "ServiceBusOps")
+            
+        except Exception as e:
+            console_error(f"❌ Fatal error in listener for {topic_name}/{subscription_name}: {e}", "ServiceBusOps")
+            raise
+        finally:
+            # Clean up resources
+            if credential:
+                try:
+                    await credential.close()
+                    if credential in self._active_credentials:
+                        self._active_credentials.remove(credential)
+                except Exception as cleanup_error:
+                    console_debug(f"Error during credential cleanup: {cleanup_error}", "ServiceBusOps")
+
+    async def listen_to_queue(self, queue_name: str, message_handler, stop_event: asyncio.Event):
+        """
+        Event-driven message listener for Service Bus queues.
+        Blocks until messages arrive (no polling delay) and processes them via callback.
+        
+        Args:
+            queue_name: Logical name of the queue or actual queue name
+            message_handler: Async callback function to process each message (receives message dict)
+            stop_event: asyncio.Event to signal when to stop listening
+            
+        Raises:
+            Exception: If receiver setup or message processing fails critically
+        """
+        client = None
+        credential = None
+        receiver = None
+        
+        try:
+            # Get Service Bus client and credential
+            client, credential = await self._get_servicebus_client()
+            
+            # Resolve logical queue name to actual name
+            actual_queue_name = self.queues.get(queue_name, queue_name)
+            
+            console_info(f"🎧 Starting event-driven listener for queue {actual_queue_name}", "ServiceBusOps")
+            
+            # Create receiver for the queue
+            receiver = client.get_queue_receiver(
+                queue_name=actual_queue_name,
+                max_wait_time=60  # Wait up to 60 seconds per receive call
+            )
+            
+            # Event-driven message processing loop
+            async with receiver:
+                while not stop_event.is_set():
+                    try:
+                        # Receive messages (blocks until messages arrive or timeout)
+                        received_msgs = await receiver.receive_messages(max_wait_time=60, max_message_count=10)
+                        
+                        if not received_msgs:
+                            # Timeout reached, check stop_event and continue
+                            continue
+                        
+                        console_info(f"📨 Received {len(received_msgs)} message(s) from queue {actual_queue_name}", "ServiceBusOps")
+                        
+                        # Process each message
+                        for msg in received_msgs:
+                            if stop_event.is_set():
+                                # Stop requested, abandon remaining messages
+                                await receiver.abandon_message(msg)
+                                continue
+                            
+                            try:
+                                # Parse message body
+                                if msg.body:
+                                    if isinstance(msg.body, bytes):
+                                        body_str = msg.body.decode('utf-8')
+                                    elif isinstance(msg.body, str):
+                                        body_str = msg.body
+                                    elif hasattr(msg.body, '__iter__'):
+                                        body_parts = list(msg.body)
+                                        body_str = ''.join(part.decode('utf-8') if isinstance(part, bytes) else str(part) for part in body_parts)
+                                    else:
+                                        body_str = str(msg.body)
+                                else:
+                                    body_str = ""
+                                
+                                # All queue messages are raw text for LLM processing
+                                parsed_body = body_str
+                                
+                                # Create message dict
+                                message_dict = {
+                                    'body': parsed_body,
+                                    'content_type': msg.content_type,
+                                    'correlation_id': msg.correlation_id,
+                                    'message_id': msg.message_id,
+                                    'properties': dict(msg.application_properties) if msg.application_properties else {},
+                                    'delivery_count': msg.delivery_count,
+                                    'enqueued_time': msg.enqueued_time_utc.isoformat() if msg.enqueued_time_utc else None
+                                }
+                                
+                                # Call the message handler
+                                await message_handler(message_dict)
+                                
+                                # Complete the message (removes from queue)
+                                await receiver.complete_message(msg)
+                                console_debug(f"✅ Completed message {msg.message_id}", "ServiceBusOps")
+                                
+                            except Exception as msg_error:
+                                console_error(f"❌ Error processing message {msg.message_id}: {msg_error}", "ServiceBusOps")
+                                # Abandon message so it can be retried
+                                await receiver.abandon_message(msg)
+                    
+                    except asyncio.CancelledError:
+                        console_info(f"🛑 Listener for queue {actual_queue_name} cancelled", "ServiceBusOps")
+                        break
+                    except Exception as receive_error:
+                        console_error(f"❌ Error receiving messages from queue {actual_queue_name}: {receive_error}", "ServiceBusOps")
+                        # Wait a bit before retrying to avoid tight error loops
+                        await asyncio.sleep(5)
+            
+            console_info(f"🔚 Stopped listening to queue {actual_queue_name}", "ServiceBusOps")
+            
+        except Exception as e:
+            console_error(f"❌ Fatal error in listener for queue {queue_name}: {e}", "ServiceBusOps")
+            raise
+        finally:
+            # Clean up resources
+            if credential:
+                try:
+                    await credential.close()
+                    if credential in self._active_credentials:
+                        self._active_credentials.remove(credential)
+                except Exception as cleanup_error:
+                    console_debug(f"Error during credential cleanup: {cleanup_error}", "ServiceBusOps")
+
+    async def receive_queue_messages(self, queue_name: str, max_wait_time: int = 5) -> List[Dict[str, Any]]:
+        """
+        Receive messages from a Service Bus queue.
+        
+        Args:
+            queue_name (str): Logical name of the queue or actual queue name
+            max_wait_time (int): Maximum time to wait for messages in seconds
+            
+        Returns:
+            List of received messages as dictionaries
+        """
+        try:
+            client, credential = await self._get_servicebus_client()
+            
+            # Check if queue_name is a logical name in our mapping, otherwise use as-is
+            actual_queue_name = self.queues.get(queue_name, queue_name)
+            
+            # More visible polling indicator for queues
+            console_info(f"🔍 Polling queue {actual_queue_name} for messages (timeout: {max_wait_time}s)", "ServiceBusOps")
+            
+            receiver = client.get_queue_receiver(queue_name=actual_queue_name)
+            
+            async with client, receiver:
+                received_msgs = await receiver.receive_messages(max_wait_time=max_wait_time)
+                
+                if not received_msgs:
+                    console_debug(f"📭 No messages found in queue {actual_queue_name}", "ServiceBusOps")
+                    return []
+                
+                console_info(f"📨 Found {len(received_msgs)} message(s) in queue {actual_queue_name}", "ServiceBusOps")
+                messages = []
+                
+                for msg in received_msgs:
+                        try:
+                            # Parse message body - FIXED: properly extract content from generator
+                            if msg.body:
+                                # Handle different body types - Service Bus SDK might return string, bytes, or generator
+                                if isinstance(msg.body, bytes):
+                                    body_str = msg.body.decode('utf-8')
+                                    console_debug(f"Message {msg.message_id} decoded from bytes, length: {len(body_str)}", "ServiceBusOps")
+                                elif isinstance(msg.body, str):
+                                    body_str = msg.body
+                                    console_debug(f"Message {msg.message_id} already string, length: {len(body_str)}", "ServiceBusOps")
+                                elif hasattr(msg.body, '__iter__'):
+                                    # Handle generator objects properly
+                                    try:
+                                        body_parts = list(msg.body)
+                                        body_str = ''.join(part.decode('utf-8') if isinstance(part, bytes) else str(part) for part in body_parts)
+                                        console_debug(f"Message {msg.message_id} extracted from generator, length: {len(body_str)}", "ServiceBusOps")
+                                    except Exception as e:
+                                        console_warning(f"Failed to extract body from generator: {e}, falling back to str()", "ServiceBusOps")
+                                        body_str = str(msg.body)
+                                else:
+                                    body_str = str(msg.body)
+                                    console_debug(f"Message {msg.message_id} converted to string from {type(msg.body)}, length: {len(body_str)}", "ServiceBusOps")
+                            else:
+                                body_str = ""
+                                console_warning(f"Message {msg.message_id} has empty body", "ServiceBusOps")
+                            
+                            if body_str:
+                                console_debug(f"Message {msg.message_id} body content: {body_str[:100]}...", "ServiceBusOps")
+                                console_debug(f"Message {msg.message_id} content type: {msg.content_type}", "ServiceBusOps")
+                                
+                                # All messages are raw text for LLM processing
+                                console_info(f"Message {msg.message_id} is raw text for LLM processing", "ServiceBusOps")
+                                parsed_body = body_str
+                            else:
+                                console_warning(f"Message {msg.message_id} has empty body", "ServiceBusOps")
+                                parsed_body = ""
+                            
+                            message_dict = {
+                                'body': parsed_body,
+                                'content_type': msg.content_type,
+                                'correlation_id': msg.correlation_id,
+                                'message_id': msg.message_id,
+                                'properties': dict(msg.application_properties) if msg.application_properties else {},
+                                'delivery_count': msg.delivery_count,
+                                'enqueued_time': msg.enqueued_time_utc.isoformat() if msg.enqueued_time_utc else None
+                            }
+                            messages.append(message_dict)
+                            
+                            # Complete the message to remove it from the queue
+                            await receiver.complete_message(msg)
+                            console_info(f"Completed message {msg.message_id} from queue {queue_name}", "ServiceBusOps")
+                            
+                        except Exception as msg_error:
+                            console_error(f"Error processing message {msg.message_id}: {msg_error}", "ServiceBusOps")
+                            # Abandon the message so it can be retried
+                            await receiver.abandon_message(msg)
+                
+                if messages:
+                    console_info(f"Received {len(messages)} messages from queue {queue_name}", "ServiceBusOps")
+                
+                # Explicitly close the credential to clean up HTTP sessions
+                await credential.close()
+                # Remove from active tracking
+                if credential in self._active_credentials:
+                    self._active_credentials.remove(credential)
+                return messages
+        
+        except Exception as e:
+            console_error(f"Error receiving queue messages from {queue_name}: {e}", "ServiceBusOps")
+            # Clean up credential even on error
+            try:
+                await credential.close()
+                if credential in self._active_credentials:
+                    self._active_credentials.remove(credential)
+            except:
+                pass
+            return []
+
+    async def cleanup_all_credentials(self):
+        """
+        Clean up any remaining active credentials to prevent unclosed session warnings.
+        """
+        if self._active_credentials:
+            console_info(f"Cleaning up {len(self._active_credentials)} remaining credentials", "ServiceBusOps")
+            for credential in self._active_credentials.copy():
+                try:
+                    await credential.close()
+                    self._active_credentials.remove(credential)
+                except Exception as e:
+                    console_debug(f"Error closing credential: {e}", "ServiceBusOps")
+            self._active_credentials.clear()
+
+    async def send_exception_alert(self, exception_type: str, priority: str, loan_application_id: str, exception_data: str) -> bool:
+        """
+        Send an exception alert to the exception handling topic.
+        
+        Args:
+            exception_type (str): Type of exception
+            priority (str): Priority level (high, medium, low)
+            loan_application_id (str): Associated loan application ID
+            exception_data (str): Exception details as JSON string
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Create exception alert message
+            alert_message = f"""Exception Alert: {exception_type}
+Priority: {priority}
+Loan ID: {loan_application_id}
+Details: {exception_data}
+Timestamp: {datetime.utcnow().isoformat()}"""
+
+            # Send to exception alerts topic
+            return await self.send_message(
+                destination_name="exception_alerts",
+                message_body=alert_message,
+                correlation_id=loan_application_id,
+                destination_type="topic"
+            )
+            
+        except Exception as e:
+            console_error(f"Failed to send exception alert: {e}", "ServiceBusOps")
+            return False
+
+    async def send_message_to_topic(self, topic_name: str, message_body: str, correlation_id: Optional[str] = None) -> bool:
+        """
+        Send a message to a specific Service Bus topic (alias for send_message with topic type).
+        
+        Args:
+            topic_name (str): The logical name of the topic to send the message to
+            message_body (str): The message payload as raw text
+            correlation_id (str, optional): A correlation ID for tracking
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        return await self.send_message(
+            destination_name=topic_name,
+            message_body=message_body,
+            correlation_id=correlation_id,
+            destination_type="topic"
+        )
+
+    async def send_audit_message(self, agent_name: str, action: str, loan_application_id: str, audit_data: Dict[str, Any]) -> bool:
+        """
+        Send an audit message to the audit logging topic.
+        
+        Args:
+            agent_name (str): Name of the agent performing the action
+            action (str): Action being performed 
+            loan_application_id (str): Associated loan application ID
+            audit_data (Dict[str, Any]): Audit details as dictionary
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Create audit message
+            audit_message = {
+                "agent_name": agent_name,
+                "action": action,
+                "loan_application_id": loan_application_id,
+                "audit_data": audit_data,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+
+            # Send to audit events topic (consolidated)
+            return await self.send_message(
+                destination_name="audit_events",
+                message_body=json.dumps(audit_message),
+                correlation_id=loan_application_id,
+                destination_type="topic"
+            )
+            
+        except Exception as e:
+            console_error(f"Failed to send audit message: {e}", "ServiceBusOps")
+            return False
+
+    async def send_audit_log(self, agent_name: str, action: str, loan_application_id: str, audit_data: Dict[str, Any]) -> bool:
+        """
+        Send an audit log message to the audit logging topic (alias for send_audit_message).
+        
+        Args:
+            agent_name (str): Name of the agent performing the action
+            action (str): Action being performed 
+            loan_application_id (str): Associated loan application ID
+            audit_data (Dict[str, Any]): Audit details as dictionary
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        return await self.send_audit_message(agent_name, action, loan_application_id, audit_data)
+
+    async def send_message_to_topic(self, topic_name: str, message_body: str, correlation_id: str = None) -> bool:
+        """
+        Send a message to a specific topic.
+        
+        Args:
+            topic_name (str): Name of the topic
+            message_body (str): Message content
+            correlation_id (str, optional): Correlation ID for message tracking
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        return await self.send_message(
+            destination_name=topic_name,
+            message_body=message_body,
+            correlation_id=correlation_id,
+            destination_type="topic"
+        )
+
+    async def send_audit_message(self, agent_name: str, action: str, loan_application_id: str = None, audit_data: dict = None) -> bool:
+        """
+        Simplified audit message sending for backward compatibility.
+        
+        Args:
+            agent_name (str): Name of the agent sending the audit
+            action (str): Action being audited
+            loan_application_id (str, optional): Associated loan application ID
+            audit_data (dict, optional): Additional audit data
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        # Create audit message directly to avoid recursion
+        try:
+            # Create audit message
+            audit_message = {
+                "agent_name": agent_name,
+                "action": action,
+                "loan_application_id": loan_application_id or "unknown",
+                "audit_data": audit_data or {},
+                "timestamp": datetime.utcnow().isoformat()
+            }
+
+            # Send to audit events topic (consolidated)
+            return await self.send_message(
+                destination_name="audit_events",
+                message_body=json.dumps(audit_message),
+                correlation_id=loan_application_id or "unknown",
+                destination_type="topic"
+            )
+            
+        except Exception as e:
+            console_error(f"Failed to send audit message: {e}", "ServiceBusOps")
+            return False
+
+    # Note: No close() method needed since we use per-operation clients
+    # Each method creates its own client and properly disposes it via async context managers

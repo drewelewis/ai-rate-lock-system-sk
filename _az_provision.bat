@@ -1,0 +1,1 @@
+azd provision --no-prompt

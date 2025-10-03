@@ -1,0 +1,13 @@
+name: ai-rate-lock-system
+metadata:
+  template: ai-rate-lock-system@0.0.1-beta
+
+# Remove services for now - will add containerization later
+# services:
+#   api:
+#     project: ./
+#     language: python
+#     host: containerapp
+
+# Post-deployment hooks removed - now using full declarative Bicep approach
+# All managed identity configuration is handled directly in Bicep templates

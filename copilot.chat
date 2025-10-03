@@ -1,0 +1,676 @@
+The loan lock process (also called a rate lock) is a key step in securing a mortgage or other type of loan. It refers to an agreement between a borrower and a lender to "lock in" the interest rate on a loan for a specified period of time, typically from the time of application through to closing.
+🔐 Here's how the loan lock process works:
+
+
+When it Happens:
+
+A borrower can choose to lock the rate at the time of application or any time before closing.
+Locking is often done when interest rates are favorable and the borrower wants to avoid the risk of them rising.
+
+
+
+What It Locks:
+
+Interest rate (most important)
+Sometimes also points, fees, or loan terms
+
+
+
+Lock Period:
+
+Typically ranges from 15 to 60 days, but can be longer.
+The lock must be valid through the expected closing date.
+
+
+
+Why It Matters:
+
+If rates go up, you're protected.
+If rates go down, you may not benefit unless your lender offers a "float-down" option.
+
+
+
+What Happens If It Expires:
+
+If the loan doesn’t close before the lock expires, you may:
+
+Pay a fee to extend the lock.
+Accept the current market rate (which could be higher or lower).
+
+
+
+
+
+Types of Rate Locks:
+
+Standard Lock: Fixed rate for a set period.
+Float-Down Lock: Allows you to take advantage of a lower rate if it drops during the lock period (usually at a cost).
+Lock and Shop: Lets you lock a rate before finding a property (offered by some lenders).
+
+
+
+
+Would you like a visual diagram of this process or help comparing lock options from different lenders?
+Provide your feedback on BizChatYou said: I am building a system where users send an email to the mortgage company to get start the rate lock process.  This will be an agentic system.  I want to build this as a multi-agent design... What agents would you use to replicate the normal human led process?Copilot said: CopilotThat’s a great use case for a multi-agent system, Drew — especially since the loan lock process involves multiple steps, stakeholders, and validations. Here's a breakdown of how you could model this using agentic design, with each agent replicating a role typically handled by a human in the mortgage rate lock process.
+
+🧠 Multi-Agent Design for Loan Lock Initiation via Email
+1. Email Intake Agent
+
+Role: Monitors the inbox for new loan lock requests.
+Tasks:
+
+Parse incoming emails.
+Extract borrower details, loan application ID, property address, and requested lock terms.
+Validate sender identity (e.g., match email to known borrower records).
+
+
+Tools: Outlook Graph API, Azure Logic Apps, or Semantic Kernel email skill.
+
+2. Loan Application Context Agent
+
+Role: Retrieves and verifies loan application data.
+Tasks:
+
+Pull borrower’s loan file from LOS (Loan Origination System).
+Check loan status (e.g., pre-approved, underwritten).
+Confirm eligibility for rate lock.
+
+
+Tools: API integration with Encompass, Blend, or other LOS.
+
+3. Rate Quote Agent
+
+Role: Fetches current rate lock options.
+Tasks:
+
+Query pricing engine (e.g., Optimal Blue, MCT, Polly).
+Match borrower’s loan profile to available rate lock terms.
+Return options (e.g., 30-day lock @ 6.25%, 45-day @ 6.375%).
+
+
+Optional: Include float-down or lock-and-shop options.
+
+4. Compliance & Risk Agent
+
+Role: Ensures the lock request complies with internal and regulatory guidelines.
+Tasks:
+
+Check lock window vs. estimated closing date.
+Validate lock fees, disclosures, and timing.
+Flag any exceptions (e.g., expired pre-approval, missing disclosures).
+
+
+
+5. Lock Confirmation Agent
+
+Role: Executes the lock and sends confirmation.
+Tasks:
+
+Submit lock request to pricing engine or LOS.
+Generate lock confirmation document.
+Email borrower and loan officer with confirmation and next steps.
+
+
+
+6. Audit & Logging Agent
+
+Role: Maintains a record of all actions for compliance and traceability.
+Tasks:
+
+Log timestamps, agent actions, and decisions.
+Store audit trail in a secure, queryable format (e.g., Azure Table Storage, Cosmos DB).
+
+
+
+
+🧩 Optional Supporting Agents
+
+Exception Handler Agent: Escalates issues to a human loan officer if something goes wrong.
+Notification Agent: Sends SMS or push notifications to borrowers or internal staff.
+Analytics Agent: Tracks lock trends, timing, and borrower behavior for optimization.
+
+
+Would you like a diagram of this agent architecture or a Semantic Kernel planner template to start prototyping this system?
+Provide your feedback on BizChatYou said: I like what you have here... I would like to see a json entity design that would represent a completed loan lock.  At a minimum it should have a status field and any other meta data required for a rate lock.Copilot said: CopilotHere’s a sample JSON entity design for a completed loan lock. This structure is designed to be extensible and agent-friendly, capturing all the key metadata typically involved in a mortgage rate lock process.
+
+🧾 Sample JSON: LoanLock Entity
+JSON{  "loanLockId": "LL-20250927-00123",  "loanApplicationId": "LA-20250815-04567",  "borrower": {    "name": "Jane Doe",    "email": "jane.doe@example.com",    "phone": "+1-555-123-4567"  },  "property": {    "address": "123 Main St, Morristown, NJ 07960",    "type": "Single Family",    "occupancy": "Primary Residence"  },  "lockDetails": {    "status": "Locked",  // Other values: "Pending", "Expired", "Cancelled"    "lockDate": "2025-09-27T14:30:00Z",    "lockExpirationDate": "2025-10-27T23:59:59Z",    "lockTermDays": 30,    "rate": 6.25,    "loanAmount": 450000,    "loanType": "Conventional",    "loanPurpose": "Purchase",    "rateType": "Fixed",    "floatDownOption": false,    "lockSource": "Optimal Blue",    "lockedBy": "agent:LockConfirmationAgent"  },  "compliance": {    "disclosuresSent": true,    "lockFee": 250.00,    "lockFeeWaived": false,    "regulatoryChecksPassed": true,    "exceptions": []  },  "audit": {    "createdBy": "agent:EmailIntakeAgent",    "createdAt": "2025-09-27T14:31:00Z",    "lastUpdatedBy": "agent:ComplianceAgent",    "lastUpdatedAt": "2025-09-27T14:45:00Z"  },  "notifications": {    "borrowerNotified": true,    "loanOfficerNotified": true,    "notificationMethod": ["email"]  }}Show more lines
+
+✅ Key Design Considerations:
+
+status is central for tracking the lifecycle of the lock.
+lockDetails encapsulates all rate-specific metadata.
+compliance ensures regulatory and internal policy checks are tracked.
+audit supports traceability for agentic workflows.
+notifications helps agents coordinate borrower and staff communication.
+
+Would you like a schema definition (e.g., JSON Schema or OpenAPI) for validation or integration into your system?
+Provide your feedback on BizChatYou said: I like the JSON you presented, knowing that this is a final state of the JSON once the lock is in place.  Can you give me a few examples of other states and what field you expect to have values, and what ones could be empty?Copilot said: CopilotGreat question, Drew. Since you're designing an agentic system, it's helpful to define stateful representations of the LoanLock entity as it progresses through its lifecycle. Below are a few key states with examples of which fields would be populated, optional, or empty at each stage.
+
+🔄 Loan Lock Lifecycle States
+1. PendingRequest
+
+The borrower has initiated a lock request (e.g., via email), but no action has been taken yet.
+
+JSON{  "status": "PendingRequest",  "loanApplicationId": "LA-20250815-04567",  "borrower": {    "name": "Jane Doe",    "email": "jane.doe@example.com"  },  "lockDetails": {    "status": "PendingRequest"  },  "audit": {    "createdBy": "agent:EmailIntakeAgent",    "createdAt": "2025-09-27T14:00:00Z"  }}Show more lines
+✅ Populated: borrower, loanApplicationId, status, audit
+❌ Empty: rate, lockDate, lockExpirationDate, compliance, notifications
+
+2. UnderReview
+
+The system is validating eligibility and fetching rate options.
+
+JSON{  "status": "UnderReview",  "loanApplicationId": "LA-20250815-04567",  "borrower": { ... },  "lockDetails": {    "status": "UnderReview",    "loanAmount": 450000,    "loanType": "Conventional"  },  "audit": {    "createdBy": "agent:EmailIntakeAgent",    "lastUpdatedBy": "agent:LoanApplicationContextAgent"  }}Show more lines
+✅ Populated: loanAmount, loanType, status, audit
+❌ Empty: rate, lockDate, lockExpirationDate, compliance, notifications
+
+3. RateOptionsPresented
+
+The system has fetched rate options and is awaiting borrower confirmation.
+
+JSON{  "status": "RateOptionsPresented",  "lockDetails": {    "status": "RateOptionsPresented",    "rateOptions": [      { "termDays": 30, "rate": 6.25 },      { "termDays": 45, "rate": 6.375 }    ],    "lockSource": "Optimal Blue"  },  "audit": {    "lastUpdatedBy": "agent:RateQuoteAgent"  }}Show more lines
+✅ Populated: rateOptions, lockSource
+❌ Empty: lockDate, lockExpirationDate, compliance, notifications
+
+4. Locked
+
+Final state — lock confirmed and documented (as shown in your original request).
+
+✅ All fields populated, including:
+
+rate, lockDate, lockExpirationDate
+compliance.disclosuresSent, lockFee
+notifications.borrowerNotified
+
+
+5. Expired
+
+Lock was not used before expiration.
+
+JSON{  "status": "Expired",  "lockDetails": {    "status": "Expired",    "lockDate": "2025-08-15T10:00:00Z",    "lockExpirationDate": "2025-09-15T23:59:59Z",    "rate": 6.25  },  "audit": {    "lastUpdatedBy": "agent:AuditAgent"  }}Show more lines
+✅ Populated: rate, lockDate, lockExpirationDate
+❌ Empty: notifications, compliance (unless disclosures were sent)
+
+6. Cancelled
+
+Lock was manually cancelled (e.g., borrower changed loan type or withdrew).
+
+JSON{  "status": "Cancelled",  "lockDetails": {    "status": "Cancelled",    "cancelReason": "Borrower switched to ARM product"  },  "audit": {    "lastUpdatedBy": "agent:ExceptionHandlerAgent"  }}Show more lines
+✅ Populated: cancelReason, status
+❌ Empty: rate, lockDate, compliance, notifications
+
+Would you like a state machine diagram or a JSON Schema that enforces these conditional field requirements based on status?
+Provide your feedback on BizChatYou said: Show a state machine diagram for loan lock.Copilot said: CopilotHere is a state machine diagram for the loan lock process, showing the key states and transitions in your agentic system:
+!Loan Lock State Machine
+Let me know if you'd like this in Mermaid.js, PlantUML, or editable format for integration into your documentation or codebase.
+Provide your feedback on BizChatYou said: sure, lets get this as a mermaidCopilot said: CopilotHere’s the Mermaid.js code for the loan lock state machine diagram:
+stateDiagram-v2    [*] --> PendingRequest    PendingRequest --> UnderReview : Intake complete    UnderReview --> RateOptionsPresented : Rate options fetched    RateOptionsPresented --> Locked : Borrower confirms lock    Locked --> Expired : Lock not used before expiration    Locked --> Cancelled : Borrower or lender cancels    RateOptionsPresented --> Cancelled : Borrower withdraws    UnderReview --> Cancelled : Ineligible or withdrawn    PendingRequest --> Cancelled : Invalid request or duplicate#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 {font-family:"trebuchet ms", verdana, arial, sans-seriffont-size:16px;fill:rgb(204, 204, 204);}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .edge-animation-slow {stroke-dashoffset:900animation-duration:50s;animation-timing-function:linear;animation-delay:0s;animation-iteration-count:infinite;animation-direction:normal;animation-fill-mode:none;animation-play-state:running;animation-name:dash;animation-timeline:auto;animation-range-start:normal;animation-range-end:normal;stroke-linecap:round;stroke-dasharray:9, 5;}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .edge-animation-fast {stroke-dashoffset:900animation-duration:20s;animation-timing-function:linear;animation-delay:0s;animation-iteration-count:infinite;animation-direction:normal;animation-fill-mode:none;animation-play-state:running;animation-name:dash;animation-timeline:auto;animation-range-start:normal;animation-range-end:normal;stroke-linecap:round;stroke-dasharray:9, 5;}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .error-icon {fill:rgb(164, 65, 65)}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .error-text {fill:rgb(221, 221, 221)stroke:rgb(221, 221, 221);}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .edge-thickness-normal {stroke-width:1px}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .edge-thickness-thick {stroke-width:3.5px}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .edge-pattern-solid {stroke-dasharray:0}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .edge-thickness-invisible {stroke-width:0fill:none;}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .edge-pattern-dashed {stroke-dasharray:3}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .edge-pattern-dotted {stroke-dasharray:2}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .marker {fill:lightgreystroke:lightgrey;}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .marker.cross {stroke:lightgrey}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 svg {font-family:"trebuchet ms", verdana, arial, sans-seriffont-size:16px;}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 p {margin-top:0pxmargin-right:0px;margin-bottom:0px;margin-left:0px;}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 defs #statediagram-barbEnd {fill:lightgreystroke:lightgrey;}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 g.stateGroup text {fill:rgb(204, 204, 204)stroke:none;font-size:10px;}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 g.stateGroup text {fill:rgb(204, 204, 204)stroke:none;font-size:10px;}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 g.stateGroup .state-title {font-weight:bolderfill:rgb(224, 223, 223);}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 g.stateGroup rect {fill:rgb(31, 32, 32)stroke:rgb(204, 204, 204);}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 g.stateGroup line {stroke:lightgreystroke-width:1;}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .transition {stroke:lightgreystroke-width:1;fill:none;}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .stateGroup .composit {fill:rgb(51, 51, 51)border-bottom-width:1px;border-bottom-style:initial;border-bottom-color:initial;}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .stateGroup .alt-composit {fill:rgb(224, 224, 224)border-bottom-width:1px;border-bottom-style:initial;border-bottom-color:initial;}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .state-note {stroke:rgb(47, 47, 47)fill:rgb(71, 73, 73);}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .state-note text {fill:rgb(184, 182, 182)stroke:none;font-size:10px;}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .stateLabel .box {stroke:nonestroke-width:0;fill:rgb(31, 32, 32);opacity:0.5;}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .edgeLabel .label rect {fill:rgb(31, 32, 32)opacity:0.5;}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .edgeLabel {background-color:rgb(88, 88, 88)text-align:center;}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .edgeLabel p {background-color:rgb(88, 88, 88)}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .edgeLabel rect {opacity:0.5background-color:rgb(88, 88, 88);fill:rgb(88, 88, 88);}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .edgeLabel .label text {fill:rgb(204, 204, 204)}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .label div .edgeLabel {color:rgb(204, 204, 204)}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .stateLabel text {fill:rgb(224, 223, 223)font-size:10px;font-weight:bold;}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .node circle.state-start {fill:rgb(244, 244, 244)stroke:rgb(244, 244, 244);}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .node .fork-join {fill:rgb(244, 244, 244)stroke:rgb(244, 244, 244);}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .node circle.state-end {fill:rgb(204, 204, 204)stroke:rgb(51, 51, 51);stroke-width:1.5;}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .end-state-inner {fill:rgb(51, 51, 51)stroke-width:1.5;}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .node rect {fill:rgb(31, 32, 32)stroke:rgb(204, 204, 204);stroke-width:1px;}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .node polygon {fill:rgb(31, 32, 32)stroke:rgb(204, 204, 204);stroke-width:1px;}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 #statediagram-barbEnd {fill:lightgrey}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .statediagram-cluster rect {fill:rgb(31, 32, 32)stroke:rgb(204, 204, 204);stroke-width:1px;}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .cluster-label, #mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .nodeLabel {color:rgb(224, 223, 223)}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .statediagram-cluster rect.outer {rx:5pxry:5px;}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .statediagram-state .divider {stroke:rgb(204, 204, 204)}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .statediagram-state .title-state {rx:5pxry:5px;}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .statediagram-cluster.statediagram-cluster .inner {fill:rgb(51, 51, 51)}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .statediagram-cluster.statediagram-cluster-alt .inner {fill:rgb(85, 85, 85)}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .statediagram-cluster .inner {rx:0ry:0;}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .statediagram-state rect.basic {rx:5pxry:5px;}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .statediagram-state rect.divider {stroke-dasharray:10, 10fill:rgb(85, 85, 85);}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .note-edge {stroke-dasharray:5}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .statediagram-note rect {fill:rgb(71, 73, 73)stroke:rgb(47, 47, 47);stroke-width:1px;rx:0;ry:0;}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .statediagram-note rect {fill:rgb(71, 73, 73)stroke:rgb(47, 47, 47);stroke-width:1px;rx:0;ry:0;}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .statediagram-note text {fill:rgb(184, 182, 182)}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .statediagram-note .nodeLabel {color:rgb(184, 182, 182)}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .statediagram .edgeLabel {color:red}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 #dependencyStart, #mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 #dependencyEnd {fill:lightgreystroke:lightgrey;stroke-width:1;}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .statediagramTitleText {text-anchor:middlefont-size:18px;fill:rgb(204, 204, 204);}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 :root {--mermaid-font-family:"trebuchet ms",verdana,arial,sans-serif}
+#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91{font-family:"trebuchet ms",verdana,arial,sans-serif;font-size:16px;fill:#ccc;}@keyframes edge-animation-frame{from{stroke-dashoffset:0;}}@keyframes dash{to{stroke-dashoffset:0;}}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .edge-animation-slow{stroke-dasharray:9,5!important;stroke-dashoffset:900;animation:dash 50s linear infinite;stroke-linecap:round;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .edge-animation-fast{stroke-dasharray:9,5!important;stroke-dashoffset:900;animation:dash 20s linear infinite;stroke-linecap:round;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .error-icon{fill:#a44141;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .error-text{fill:#ddd;stroke:#ddd;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .edge-thickness-normal{stroke-width:1px;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .edge-thickness-thick{stroke-width:3.5px;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .edge-pattern-solid{stroke-dasharray:0;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .edge-thickness-invisible{stroke-width:0;fill:none;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .edge-pattern-dashed{stroke-dasharray:3;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .edge-pattern-dotted{stroke-dasharray:2;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .marker{fill:lightgrey;stroke:lightgrey;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .marker.cross{stroke:lightgrey;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 svg{font-family:"trebuchet ms",verdana,arial,sans-serif;font-size:16px;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 p{margin:0;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 defs #statediagram-barbEnd{fill:lightgrey;stroke:lightgrey;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 g.stateGroup text{fill:#ccc;stroke:none;font-size:10px;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 g.stateGroup text{fill:#ccc;stroke:none;font-size:10px;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 g.stateGroup .state-title{font-weight:bolder;fill:#e0dfdf;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 g.stateGroup rect{fill:#1f2020;stroke:#ccc;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 g.stateGroup line{stroke:lightgrey;stroke-width:1;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .transition{stroke:lightgrey;stroke-width:1;fill:none;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .stateGroup .composit{fill:#333;border-bottom:1px;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .stateGroup .alt-composit{fill:#e0e0e0;border-bottom:1px;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .state-note{stroke:hsl(180, 0%, 18.3529411765%);fill:hsl(180, 1.5873015873%, 28.3529411765%);}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .state-note text{fill:rgb(183.8476190475, 181.5523809523, 181.5523809523);stroke:none;font-size:10px;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .stateLabel .box{stroke:none;stroke-width:0;fill:#1f2020;opacity:0.5;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .edgeLabel .label rect{fill:#1f2020;opacity:0.5;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .edgeLabel{background-color:hsl(0, 0%, 34.4117647059%);text-align:center;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .edgeLabel p{background-color:hsl(0, 0%, 34.4117647059%);}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .edgeLabel rect{opacity:0.5;background-color:hsl(0, 0%, 34.4117647059%);fill:hsl(0, 0%, 34.4117647059%);}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .edgeLabel .label text{fill:#ccc;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .label div .edgeLabel{color:#ccc;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .stateLabel text{fill:#e0dfdf;font-size:10px;font-weight:bold;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .node circle.state-start{fill:#f4f4f4;stroke:#f4f4f4;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .node .fork-join{fill:#f4f4f4;stroke:#f4f4f4;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .node circle.state-end{fill:#cccccc;stroke:#333;stroke-width:1.5;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .end-state-inner{fill:#333;stroke-width:1.5;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .node rect{fill:#1f2020;stroke:#ccc;stroke-width:1px;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .node polygon{fill:#1f2020;stroke:#ccc;stroke-width:1px;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 #statediagram-barbEnd{fill:lightgrey;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .statediagram-cluster rect{fill:#1f2020;stroke:#ccc;stroke-width:1px;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .cluster-label,#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .nodeLabel{color:#e0dfdf;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .statediagram-cluster rect.outer{rx:5px;ry:5px;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .statediagram-state .divider{stroke:#ccc;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .statediagram-state .title-state{rx:5px;ry:5px;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .statediagram-cluster.statediagram-cluster .inner{fill:#333;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .statediagram-cluster.statediagram-cluster-alt .inner{fill:#555;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .statediagram-cluster .inner{rx:0;ry:0;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .statediagram-state rect.basic{rx:5px;ry:5px;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .statediagram-state rect.divider{stroke-dasharray:10,10;fill:#555;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .note-edge{stroke-dasharray:5;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .statediagram-note rect{fill:hsl(180, 1.5873015873%, 28.3529411765%);stroke:hsl(180, 0%, 18.3529411765%);stroke-width:1px;rx:0;ry:0;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .statediagram-note rect{fill:hsl(180, 1.5873015873%, 28.3529411765%);stroke:hsl(180, 0%, 18.3529411765%);stroke-width:1px;rx:0;ry:0;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .statediagram-note text{fill:rgb(183.8476190475, 181.5523809523, 181.5523809523);}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .statediagram-note .nodeLabel{color:rgb(183.8476190475, 181.5523809523, 181.5523809523);}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .statediagram .edgeLabel{color:red;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 #dependencyStart,#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 #dependencyEnd{fill:lightgrey;stroke:lightgrey;stroke-width:1;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 .statediagramTitleText{text-anchor:middle;font-size:18px;fill:#ccc;}#mermaid-b88b651f-825a-47c1-97c2-cab68c284f91 :root{--mermaid-font-family:"trebuchet ms",verdana,arial,sans-serif;}Intake completeRate options fetchedBorrower confirms lockLock not used before expirationBorrower or lender cancelsBorrower withdrawsIneligible or withdrawnInvalid request or duplicatePendingRequestUnderReviewRateOptionsPresentedLockedExpiredCancelledShow more lines
+🧭 States:
+
+PendingRequest: Email received, awaiting processing
+UnderReview: Loan and borrower eligibility being validated
+RateOptionsPresented: Lock options presented to borrower
+Locked: Lock confirmed and executed
+Expired: Lock expired before use
+Cancelled: Lock cancelled at any stage
+
+Let me know if you'd like to add substates, agent actions, or timers to this diagram!
+Provide your feedback on BizChatYou said: ok, my company gets about 1000 rate lock requests per week, and they are all in different states.  Some get stuck in the process and take longer for human analysis.  I want to create a multi-agent solution where the agents look at the queue or database records and find rate locks that are not locked, cancelled, or expired, and each agent works autonomously to complete the process.  The agents could email the user, do analysis, do further research, etc. to keep the rate lock request moving.  I want to use SK for this.  What would you recommend?  Is this feasible?Memory updatedMemory updatedCopilot said: CopilotYes — this is absolutely feasible with Semantic Kernel (SK), and your use case is a perfect fit for a multi-agent orchestration model. Here's how I’d recommend approaching it:
+
+🧠 System Overview: Autonomous Rate Lock Agents
+🎯 Goal:
+Continuously monitor a queue of ~1000 weekly rate lock requests, identify those that are not in a terminal state (Locked, Cancelled, Expired), and autonomously progress them using specialized agents.
+
+🧩 Recommended Agent Architecture
+1. Queue Monitor Agent
+
+Role: Periodically scans the database or queue.
+Action: Filters records where status ∉ {Locked, Cancelled, Expired}.
+Output: Dispatches tasks to downstream agents.
+
+
+2. State Evaluator Agent
+
+Role: Determines why a request is stuck.
+Action: Uses embeddings or rules to classify the issue:
+
+Missing borrower response
+Incomplete loan file
+Rate options not generated
+Compliance check pending
+
+
+
+
+3. Action Agents (Autonomous Workers)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+AgentRoleExample ActionsEmail AgentCommunicates with borrower or LORequest missing docs, confirm lock termsRate Quote AgentFetches updated rate optionsCalls pricing engine APIsCompliance AgentValidates disclosures, lock windowsRuns rule checksEscalation AgentFlags complex casesNotifies human analyst or LOAudit AgentLogs all actionsUpdates metadata and status
+Each agent can be implemented as a SK Planner + Function set, with memory and context.
+
+🛠️ Semantic Kernel Implementation Strategy
+✅ Skills & Plugins
+
+Email Skill: Send/receive borrower communications
+Database Skill: Query/update rate lock records
+Pricing Engine Skill: Fetch rate options
+Compliance Skill: Run rule-based checks
+Planner Skill: Use semantic reasoning to decide next steps
+
+🧠 Memory & Context
+
+Use SK Memory to store:
+
+Borrower interaction history
+Prior agent actions
+Rate lock metadata
+
+
+Enables agents to act autonomously but contextually.
+
+🔁 Orchestration
+
+Use Planner chaining or custom orchestrator to:
+
+Assign agents based on state
+Retry or escalate if no progress
+Track time-in-state for SLAs
+
+
+
+
+📊 Example Flow
+
+Queue Monitor Agent finds 200 active requests.
+For each:
+
+State Evaluator Agent determines it's missing borrower confirmation.
+Email Agent sends a personalized follow-up.
+If no response in 48h, Escalation Agent notifies LO.
+
+
+
+
+✅ Feasibility Notes
+
+Scalable: SK agents can run in parallel (e.g., Azure Functions, Durable Tasks).
+Composable: Each agent is modular and testable.
+Traceable: Audit logs and memory snapshots ensure compliance.
+
+
+Would you like:
+
+A starter SK project structure for this?
+A sample planner prompt for one of the agents?
+Help designing the agent-to-agent communication model?
+
+Let’s build this out!
+Provide your feedback on BizChatYou said: Can you give me a starter SK project structure, with the sample planner prompt included, and also include the communications model?Copilot said: CopilotAwesome — here’s a starter Semantic Kernel (SK) project structure, a sample planner prompt, and a communications model tailored to your autonomous rate lock processing system.
+
+🧱 Project Structure (SK Multi-Agent System)
+/RateLockAgentSystem
+│
+├── /skills
+│   ├── EmailSkill/                  # Send/receive borrower or LO emails
+│   ├── RateQuoteSkill/             # Fetch rate options from pricing engine
+│   ├── ComplianceSkill/            # Validate disclosures, lock windows
+│   ├── DatabaseSkill/              # Query/update rate lock records
+│   ├── EscalationSkill/            # Notify humans for stuck cases
+│   └── NotificationSkill/          # SMS or push notifications (optional)
+│
+├── /planners
+│   ├── QueueMonitorPlanner.cs      # Finds active requests
+│   ├── StateEvaluatorPlanner.cs    # Diagnoses why a request is stuck
+│   ├── LockProgressionPlanner.cs   # Orchestrates next best action
+│
+├── /memory
+│   └── MemoryStore.cs              # Stores borrower history, agent actions
+│
+├── /models
+│   └── LoanLock.cs                 # JSON entity model for rate lock
+│
+├── /orchestrator
+│   └── AgentOrchestrator.cs       # Routes tasks to appropriate agents
+│
+├── appsettings.json                # Config for APIs, DB, SK
+└── Program.cs                      # Entry point
+
+
+🧠 Sample Planner Prompt: LockProgressionPlanner
+Plain TextYou are an autonomous agent responsible for progressing a mortgage rate lock request toward completion.You are given the following context:- LoanLock status: {{status}}- Last agent action: {{lastAction}}- Time in current state: {{timeInState}} hours- Borrower email: {{borrower.email}}- Missing fields: {{missingFields}}Your goal is to determine the next best action to move this request forward. Choose from the following actions:- "SendBorrowerEmail"- "FetchRateOptions"- "RunComplianceCheck"- "EscalateToHuman"- "WaitForResponse"Respond with the best action and a short reason.Show more lines
+
+🔄 Communications Model
+🔁 Agent-to-Agent Communication
+
+Agents write to a shared memory store (e.g., Redis, Cosmos DB, or SK Memory).
+Each agent reads the latest state and decides if it should act.
+Use status + lastUpdatedBy + timeInState to avoid duplication or race conditions.
+
+📬 Agent-to-Human Communication
+
+EmailSkill sends templated messages to:
+
+Borrowers (e.g., “We need your confirmation to proceed with your rate lock.”)
+Loan Officers (e.g., “This request has been stuck for 48h. Please review.”)
+
+
+
+🧾 Logging & Audit
+
+Every agent logs:
+
+Action taken
+Timestamp
+Reason
+Outcome (success/failure)
+
+
+
+
+✅ Next Steps
+Would you like me to:
+
+Generate a starter C# project scaffold?
+Provide sample SK function definitions for one of the skills?
+Help you define agent retry logic or escalation thresholds?
+
+Let’s get this system moving!
+Provide your feedback on BizChatYou said: I like this so far, can I get this as Python?Copilot said: CopilotPerfect — here’s how you can structure your Semantic Kernel multi-agent system in Python, including:
+
+✅ Project structure
+🧠 Sample planner prompt
+🔄 Agent communication model
+
+
+🧱 1. Project Structure (Python)
+/rate_lock_agents/
+│
+├── main.py                         # Entry point
+├── config.py                       # API keys, DB config, etc.
+│
+├── /skills/
+│   ├── email_skill.py              # Send/receive borrower or LO emails
+│   ├── rate_quote_skill.py        # Fetch rate options
+│   ├── compliance_skill.py        # Validate disclosures, lock windows
+│   ├── db_skill.py                # Query/update rate lock records
+│   ├── escalation_skill.py        # Notify humans for stuck cases
+│
+├── /planners/
+│   ├── queue_monitor_planner.py   # Finds active requests
+│   ├── state_evaluator_planner.py # Diagnoses why a request is stuck
+│   ├── lock_progression_planner.py# Orchestrates next best action
+│
+├── /models/
+│   └── loan_lock.py               # JSON model for rate lock
+│
+├── /memory/
+│   └── memory_store.py            # Stores borrower history, agent actions
+│
+├── /orchestrator/
+│   └── orchestrator.py            # Routes tasks to agents
+│
+└── /utils/
+    └── logger.py                  # Logging and audit trail
+
+
+🧠 2. Sample Planner Prompt (Python Template)
+In lock_progression_planner.py:
+Pythonfrom semantic_kernel.planners import FunctionCallingPlannerplanner_prompt = """You are an autonomous agent responsible for progressing a mortgage rate lock request toward completion.Context:- LoanLock status: {{status}}- Last agent action: {{last_action}}- Time in current state: {{time_in_state}} hours- Borrower email: {{borrower_email}}- Missing fields: {{missing_fields}}Choose the next best action:- "send_borrower_email"- "fetch_rate_options"- "run_compliance_check"- "escalate_to_human"- "wait_for_response"Respond with the best action and a short reason."""Show more lines
+You can use this with FunctionCallingPlanner or StepwisePlanner depending on your orchestration style.
+
+🔄 3. Agent Communication Model
+Shared Memory (e.g., Redis, Cosmos DB, or SK Memory)
+Each agent:
+
+Reads the current state of a LoanLock record.
+Writes back its action, timestamp, and outcome.
+
+Agent-to-Agent Coordination
+Agents do not call each other directly. Instead:
+
+The Orchestrator assigns tasks based on planner output.
+Each agent is stateless, relying on shared memory and context.
+
+Agent-to-Human Communication
+
+email_skill.py sends templated messages via SMTP or Graph API.
+escalation_skill.py notifies loan officers or analysts when needed.
+
+
+✅ Next Steps
+Would you like me to:
+
+Generate a starter Python project scaffold as a downloadable zip?
+Provide a sample implementation of one of the agents (e.g., email_skill.py)?
+Help you wire this into Azure Functions or a task queue for scale?
+
+Let’s get this system running!
+Provide your feedback on BizChatYou said: Before you do anything, would this simply run as a monolith in Azure Container Apps?Copilot said: CopilotYes — running this as a monolith in Azure Container Apps (ACA) is a very viable and pragmatic starting point, especially for prototyping and early production. Here's how it maps out:
+
+✅ Why ACA Works Well for This
+1. Simple Deployment
+
+Package your entire SK-based multi-agent system into a single container.
+Deploy it as a single ACA revision with autoscaling based on queue size or CPU.
+
+2. Built-in Scaling
+
+ACA supports KEDA-based autoscaling, so you can scale based on:
+
+Queue length (e.g., Azure Service Bus, Storage Queue)
+HTTP traffic
+Custom metrics (e.g., number of active rate lock requests)
+
+
+
+3. Cost-Effective
+
+You only pay for what you use.
+Ideal for workloads that spike (e.g., Monday morning rate lock surges).
+
+
+🧠 Monolith Design Considerations
+✅ Works Well For:
+
+Shared memory or state (e.g., Redis, Cosmos DB)
+Centralized logging and audit
+Easier debugging and observability
+Coordinated agent orchestration
+
+⚠️ Watch Out For:
+
+Long-running tasks: Use background workers or async queues to avoid blocking.
+Agent isolation: If agents grow in complexity, consider breaking them into microservices later.
+Concurrency: Use locks or idempotency keys to avoid duplicate processing.
+
+
+🧩 Suggested Runtime Model in ACA
++-----------------------------+
+| Azure Container App        |
+|----------------------------|
+|  main.py                   |
+|  ├── Queue Monitor Agent   |
+|  ├── State Evaluator Agent |
+|  ├── Lock Progression Agent|
+|  ├── Email Agent           |
+|  ├── Compliance Agent      |
+|  └── Escalation Agent      |
++-----------------------------+
+        |
+        v
++-----------------------------+
+| Azure Storage Queue / DB   |
++-----------------------------+
+
+You can run this as:
+
+A looping background task (e.g., asyncio loop)
+Or trigger agents via Azure Service Bus / Event Grid
+
+
+🛠️ Next Step Options
+Would you like me to:
+
+Generate a Dockerfile + ACA deploy template for this?
+Provide a Python starter project scaffold zipped and ready to run?
+Help you design the queue polling + agent dispatch loop?
+
+Let me know how you'd like to proceed!
+Provide your feedback on BizChatYou said: If I used azure storage bus, what other data storage would I need?Copilot said: CopilotIf you're using Azure Service Bus as your messaging backbone, you'll still need additional data storage to support the full lifecycle of your rate lock processing system. Here's a breakdown of what you'd need and why:
+
+🧱 Core Storage Components
+1. Primary Data Store: Rate Lock Records
+
+Purpose: Store the full LoanLock entity (status, borrower info, timestamps, etc.)
+Recommended Options:
+
+Azure Cosmos DB (flexible JSON, fast queries, global scale)
+Azure Table Storage (cheaper, good for structured key-value)
+Azure SQL Database (if you need relational joins or reporting)
+
+
+
+
+✅ Use this to persist the state of each rate lock request across agents.
+
+
+2. Message Queue: Azure Service Bus
+
+Purpose: Trigger agent actions (e.g., “new request received”, “request stuck for 48h”)
+Use Cases:
+
+Decouple agent execution
+Retry failed tasks
+Schedule delayed actions (e.g., follow-up emails)
+
+
+
+
+✅ Use topics + subscriptions if you want multiple agents to react to the same event.
+
+
+3. Agent Memory / Context Store
+
+Purpose: Store intermediate agent decisions, embeddings, or chat history
+Recommended Options:
+
+Azure Redis (fast, ephemeral memory)
+Azure Cosmos DB (if you want to persist agent memory long-term)
+Semantic Kernel Memory Store (for embeddings, if using vector search)
+
+
+
+
+✅ Useful for agents that need to remember past actions or conversations.
+
+
+4. Audit & Logging
+
+Purpose: Track what each agent did, when, and why (for compliance and debugging)
+Recommended Options:
+
+Azure Application Insights (telemetry + logs)
+Azure Blob Storage (for raw logs or JSON snapshots)
+Log Analytics / Azure Monitor (for querying logs)
+
+
+
+
+✅ Helps with traceability and SLA monitoring.
+
+
+🧠 Example Data Flow
+Plain Text[User Email]    ↓[Email Agent] → [Service Bus Queue: "new_request"]   ↓[Queue Monitor Agent] → [Cosmos DB: LoanLock Record]   ↓[State Evaluator Agent] → [Service Bus: "needs_rate_quote"]   ↓[Rate Quote Agent] → [Pricing API] → [Cosmos DB]   ↓[Compliance Agent] → [Cosmos DB] → [Service Bus: "ready_to_lock"]   ↓[Lock Confirmation Agent] → [Cosmos DB] + [Email]
