@@ -91,23 +91,27 @@ class CosmosDBPlugin:
             }
             
             # Create record
-            success = await cosmos_operations.create_rate_lock_record(loan_application_id, rate_lock_data)
+            result = await cosmos_operations.create_rate_lock_record(loan_application_id, rate_lock_data)
             
-            if success:
+            if result.get("success"):
+                rate_lock_request_id = result.get("rate_lock_request_id")
                 self._send_friendly_notification(f"✅ Rate lock record created successfully for {borrower_name}")
+                self._send_friendly_notification(f"📋 Rate Lock Request ID: {rate_lock_request_id}")
                 return {
                     "success": True,
                     "loan_application_id": loan_application_id,
+                    "rate_lock_request_id": rate_lock_request_id,
                     "borrower_name": borrower_name,
                     "status": "PendingRequest",
                     "created_at": datetime.utcnow().isoformat(),
-                    "message": f"Rate lock record created for {borrower_name}"
+                    "message": f"Rate lock record created for {borrower_name} with ID {rate_lock_request_id}"
                 }
             else:
-                self._send_friendly_notification(f"❌ Failed to create rate lock record")
+                error_msg = result.get("error", "Unknown error")
+                self._send_friendly_notification(f"❌ Failed to create rate lock record: {error_msg}")
                 return {
                     "success": False,
-                    "error": "Failed to create rate lock record",
+                    "error": error_msg,
                     "loan_application_id": loan_application_id
                 }
                 

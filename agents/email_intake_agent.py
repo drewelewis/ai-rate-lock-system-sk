@@ -131,8 +131,21 @@ class EmailIntakeAgent:
             extracted_data = await self._extract_loan_data_with_llm(raw_email_content)
             
             loan_application_id = extracted_data.get('loan_application_id')
-            if not loan_application_id or loan_application_id in [None, "", "null"]:
-                logger.warning("LLM could not extract loan application ID from email content, but this should not happen with improved extraction")
+            
+            # Extract email metadata from raw content for audit trail
+            from_address = self._extract_email_address(raw_email_content)
+            subject = self._extract_subject(raw_email_content)
+            
+            # Check if loan_application_id is missing or invalid
+            if not loan_application_id or loan_application_id in [None, "", "null", "unknown"]:
+                logger.warning(f"{self.agent_name}: ⚠️ Missing loan_application_id - requesting from user")
+                await self._request_loan_id_from_user(from_address, subject, raw_email_content, extracted_data)
+                return
+            
+            # Validate if it's a generated placeholder (APP-XXXXXX format from LLM)
+            if loan_application_id.startswith("APP-") and loan_application_id.count("X") >= 4:
+                logger.warning(f"{self.agent_name}: ⚠️ LLM generated placeholder ID '{loan_application_id}' - requesting real ID from user")
+                await self._request_loan_id_from_user(from_address, subject, raw_email_content, extracted_data)
                 return
                 
             logger.info(f"{self.agent_name}: LLM successfully extracted loan ID: {loan_application_id}")
@@ -182,7 +195,7 @@ Email Content:
 {email_content}
 
 Extract and return ONLY a valid JSON object with these fields:
-- loan_application_id: The loan ID found in the email. Look for patterns like "APP-123456", "Loan Application ID:", "Application #:", "Loan #:", "ID:", etc. REQUIRED FIELD - generate one if none found using format APP-XXXXXX
+- loan_application_id: The loan ID found in the email. Look for patterns like "APP-123456", "LA-123456", "Loan Application ID:", "Application #:", "Loan #:", "ID:", etc. If NO loan ID is found, return null.
 - borrower_name: Full name of the borrower
 - property_address: Full property address
 - loan_amount: Loan amount in dollars (number only, no commas or $)
@@ -192,12 +205,12 @@ Extract and return ONLY a valid JSON object with these fields:
 - property_type: Type of property (single family, condo, etc.)
 - loan_purpose: Purchase, refinance, etc.
 
-Rules:
+CRITICAL RULES:
 1. Return ONLY valid JSON, no explanation or markdown formatting
-2. Use null for missing values EXCEPT loan_application_id which is REQUIRED
-3. Extract actual data from the email content
+2. Use null for missing values (do NOT generate placeholder IDs)
+3. Extract actual data from the email content - do NOT make up or generate data
 4. Be precise and accurate
-5. If no loan ID found, generate one using format APP-XXXXXX with random 6 digits
+5. If no loan ID found anywhere in the email, set loan_application_id to null
 
 JSON:"""
 
@@ -228,11 +241,14 @@ JSON:"""
             # Parse the JSON
             parsed_data = json.loads(extracted_json)
             
-            # Validate required fields - NO FALLBACKS
-            if not parsed_data.get('loan_application_id') or parsed_data.get('loan_application_id') in [None, "", "null"]:
-                raise ValueError(f"LLM failed to extract loan_application_id from email. Raw response: {extracted_json}")
+            # Check if loan_application_id is missing (null is acceptable - we'll request it from user)
+            loan_id = parsed_data.get('loan_application_id')
+            if loan_id is None or loan_id in ["", "null"]:
+                logger.info(f"{self.agent_name}: ⚠️ LLM returned null for loan_application_id - will request from user")
+                parsed_data['loan_application_id'] = None  # Normalize to None
+            else:
+                logger.info(f"{self.agent_name}: ✅ LLM successfully extracted loan ID: {loan_id}")
             
-            logger.info(f"LLM successfully extracted loan ID: {parsed_data.get('loan_application_id')}")
             return parsed_data
             
         except Exception as e:
@@ -553,40 +569,140 @@ JSON:"""
         }
 
     async def _send_acknowledgment_notification(self, recipient_email: str, loan_id: str, extracted_data: Dict[str, Any]):
-        """Sends a message to the outbound email topic via Service Bus."""
+        """Sends acknowledgment email via Service Bus plugin."""
+        
+        borrower_name = extracted_data.get('borrower_name', 'Customer')
+        lock_period = extracted_data.get('requested_lock_period_days', 30)
         
         subject = f"Rate Lock Request Received for Loan: {loan_id}"
         body = f"""
-        Dear {extracted_data.get('borrower_name', 'Customer')},
+Dear {borrower_name},
 
-        Thank you for submitting your rate lock request for loan application {loan_id}.
+Thank you for submitting your rate lock request for loan application {loan_id}.
 
-        We have received your request for a {extracted_data.get('requested_lock_period_days')}-day lock period. Our system is now gathering the required information from the Loan Origination System.
+We have received your request for a {lock_period}-day lock period. Our system is now gathering the required information from the Loan Origination System.
 
-        You will receive a separate email with your personalized rate quotes shortly.
+You will receive a separate email with your personalized rate quotes shortly.
 
-        Thank you,
-        The Automated Rate Lock System
+Thank you,
+The Automated Rate Lock System
         """
         
-        email_payload = {
-            "recipient_email": recipient_email,
-            "subject": subject,
-            "body": body,
-            "attachments": [] # No attachments for acknowledgment
+        # Use Service Bus plugin to send email (follows plugin architecture)
+        await self.servicebus_plugin.send_email_notification(
+            recipient_email=recipient_email,
+            subject=subject,
+            body=body,
+            loan_application_id=loan_id
+        )
+        
+        logger.info(f"Sent acknowledgment notification via plugin for loan '{loan_id}'")
+
+    async def _request_loan_id_from_user(self, from_address: str, original_subject: str, 
+                                         raw_email_content: str, extracted_data: Dict[str, Any]):
+        """
+        Send email to user requesting the missing loan_application_id via Service Bus plugin.
+        Creates a pending record in Cosmos DB to track the request.
+        """
+        from utils.id_generator import generate_rate_lock_request_id
+        
+        logger.info(f"{self.agent_name}: 📧 Requesting loan_application_id from user at {from_address}")
+        
+        # Generate a temporary tracking ID for this request
+        temp_request_id = generate_rate_lock_request_id("PENDING", prefix="TMP")
+        
+        borrower_name = extracted_data.get('borrower_name', 'Customer')
+        property_address = extracted_data.get('property_address', 'your property')
+        
+        subject = "Action Required: Missing Loan Application ID"
+        body = f"""
+Dear {borrower_name},
+
+Thank you for submitting your rate lock request. We have received your email regarding {property_address}.
+
+However, we were unable to identify your Loan Application ID from your message. To process your rate lock request, we need this information.
+
+**Please reply to this email with your Loan Application ID.**
+
+Your Loan Application ID should look like one of these formats:
+  • LA-123456
+  • APP-789012
+  • Loan #345678
+  • Application ID: 456789
+
+Once we receive your Loan Application ID, we will immediately process your rate lock request.
+
+Temporary Tracking Reference: {temp_request_id}
+
+If you need assistance locating your Loan Application ID, please contact your loan officer.
+
+Thank you for your cooperation.
+
+Best regards,
+AI Rate Lock System
+Automated Processing Team
+
+---
+Reply to this email with your Loan Application ID to continue processing.
+        """
+        
+        # Send message via Service Bus plugin (channel-agnostic: email, chat, SMS, etc.)
+        result = await self.servicebus_plugin.send_outbound_message(
+            recipient=from_address,
+            subject=subject,
+            body=body,
+            loan_application_id=temp_request_id
+        )
+        
+        if not result.get("success"):
+            logger.error(f"{self.agent_name}: ❌ Failed to send loan ID request email: {result.get('error')}")
+            return
+        
+        # Create a pending record in Cosmos DB to track this incomplete request
+        pending_record = {
+            "temp_request_id": temp_request_id,
+            "status": "PENDING_LOAN_ID",
+            "source_email": from_address,
+            "original_subject": original_subject,
+            "received_at": datetime.utcnow().isoformat(),
+            "extracted_data": extracted_data,
+            "raw_email_content": raw_email_content[:1000],  # First 1000 chars for audit
+            "awaiting_response": True,
+            "request_sent_at": datetime.utcnow().isoformat()
         }
         
-        await self.servicebus_plugin.send_message_to_queue(
-            queue_name="outbound_confirmations",
-            message_type="send_email_notification",
-            loan_application_id=loan_id,
-            message_data=email_payload
+        try:
+            # Store with temp ID as the loan_application_id until we get the real one
+            await self.cosmos_plugin.create_rate_lock(
+                loan_application_id=temp_request_id,
+                borrower_name=borrower_name,
+                borrower_email=from_address,
+                borrower_phone=extracted_data.get('contact_phone', ''),
+                property_address=property_address,
+                requested_lock_period="30",
+                additional_data=json.dumps(pending_record)
+            )
+            logger.info(f"{self.agent_name}: ✅ Created pending record with temp ID: {temp_request_id}")
+        except Exception as e:
+            logger.error(f"{self.agent_name}: ❌ Failed to create pending record: {e}")
+        
+        # Send audit message
+        await self._send_audit_message(
+            action="LOAN_ID_REQUESTED",
+            loan_application_id=temp_request_id,
+            audit_data={
+                "from_address": from_address,
+                "reason": "Missing loan_application_id in email",
+                "temp_request_id": temp_request_id,
+                "borrower_name": borrower_name
+            }
         )
-        logger.info(f"Sent acknowledgment notification request to Service Bus for loan '{loan_id}'")
+        
+        logger.info(f"{self.agent_name}: 📨 Loan ID request email sent to {from_address} (Tracking: {temp_request_id})")
 
     async def _send_audit_message(self, action: str, loan_application_id: str, audit_data: Dict[str, Any]):
         try:
-            await self.servicebus_plugin.send_audit_message(
+            await self.servicebus_plugin.send_audit_log(
                 agent_name=self.agent_name,
                 action=action,
                 loan_application_id=loan_application_id,
@@ -602,7 +718,7 @@ JSON:"""
                 "error_message": message,
                 "timestamp": datetime.utcnow().isoformat()
             }
-            await self.servicebus_plugin.send_exception_alert(
+            await self.servicebus_plugin.send_exception(
                 exception_type=exception_type,
                 priority=priority,
                 loan_application_id=loan_application_id,

@@ -7,6 +7,7 @@ from azure.cosmos.aio import CosmosClient
 from azure.cosmos import exceptions, PartitionKey
 from azure.identity.aio import DefaultAzureCredential
 from utils.logger import console_info, console_debug, console_warning, console_error, console_telemetry_event
+from utils.id_generator import generate_rate_lock_request_id, is_valid_rate_lock_request_id
 
 
 class CosmosDBOperations:
@@ -97,23 +98,36 @@ class CosmosDBOperations:
         return self._container_cache[container_name]
 
     # Rate Lock Records Operations
-    async def create_rate_lock_record(self, loan_application_id: str, rate_lock_data: Dict[str, Any]) -> bool:
+    async def create_rate_lock_record(self, loan_application_id: str, rate_lock_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Create a new rate lock record.
+        Create a new rate lock record with a unique rate_lock_request_id.
         
         Args:
             loan_application_id (str): The loan application ID (partition key)
             rate_lock_data (Dict[str, Any]): Rate lock data to store
             
         Returns:
-            bool: True if successful, False otherwise
+            Dict[str, Any]: Dictionary with 'success' status and 'rate_lock_request_id' if successful
         """
         try:
             container = await self._get_container('rate_lock_records')
             
+            # Generate unique rate_lock_request_id for new requests
+            # Check if one was provided (for updates/resubmissions)
+            rate_lock_request_id = rate_lock_data.get('rate_lock_request_id')
+            
+            if not rate_lock_request_id or not is_valid_rate_lock_request_id(rate_lock_request_id):
+                # This is a NEW request - generate a unique ID
+                rate_lock_request_id = generate_rate_lock_request_id(loan_application_id)
+                console_info(f"Generated new rate_lock_request_id: {rate_lock_request_id}", "CosmosDBOps")
+            else:
+                # Existing request ID provided (update/resubmission scenario)
+                console_info(f"Using existing rate_lock_request_id: {rate_lock_request_id}", "CosmosDBOps")
+            
             # Ensure required fields
             record = {
                 'id': rate_lock_data.get('id', f"rate_lock_{loan_application_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"),
+                'rate_lock_request_id': rate_lock_request_id,  # Business-facing unique ID
                 'loanApplicationId': loan_application_id,  # Partition key
                 'created_at': datetime.utcnow().isoformat(),
                 'updated_at': datetime.utcnow().isoformat(),
@@ -123,18 +137,28 @@ class CosmosDBOperations:
             
             await container.create_item(body=record)
             
-            console_info(f"Rate lock record created: {record['id']}", "CosmosDBOps")
+            console_info(f"Rate lock record created: {record['id']} (Request ID: {rate_lock_request_id})", "CosmosDBOps")
             console_telemetry_event("rate_lock_created", {
                 "loan_application_id": loan_application_id,
                 "record_id": record['id'],
+                "rate_lock_request_id": rate_lock_request_id,
                 "status": record['status']
             }, "CosmosDBOps")
             
-            return True
+            return {
+                "success": True,
+                "rate_lock_request_id": rate_lock_request_id,
+                "record_id": record['id'],
+                "loan_application_id": loan_application_id
+            }
             
         except Exception as e:
             console_error(f"Failed to create rate lock record for {loan_application_id}: {e}", "CosmosDBOps")
-            return False
+            return {
+                "success": False,
+                "error": str(e),
+                "loan_application_id": loan_application_id
+            }
 
     async def get_rate_lock_record(self, loan_application_id: str, record_id: str = None) -> Optional[Dict[str, Any]]:
         """

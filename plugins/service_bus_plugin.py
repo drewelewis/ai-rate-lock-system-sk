@@ -1,40 +1,20 @@
 from datetime import datetime
-import os
-import asyncio
 import json
-from typing import List, Optional, Annotated, Dict, Any
-from semantic_kernel import Kernel
+import logging
+from typing import Annotated, Dict, Any
 from semantic_kernel.functions import kernel_function
+from operations.service_bus_operations import ServiceBusOperations
 
-# Try to import the real ServiceBusOperations, fallback to mock if it fails
-try:
-    from operations.service_bus_operations import ServiceBusOperations
-    print("✓ Using Service Bus Operations")
-except Exception as e:
-    print(f"⚠ Could not import ServiceBusOperations: {e}")
-    raise
+# Initialize logger
+logger = logging.getLogger(__name__)
 
 # Initialize service bus operations
 servicebus_operations = ServiceBusOperations()
 
 class ServiceBusPlugin:
-    def __init__(self, debug=False, session_id=None):
-        self.debug = debug
-        self.session_id = session_id
-
-    def _log_function_call(self, function_name: str, **kwargs):
-        """Log function calls for debugging"""
-        if self.debug:
-            print(f"🔧 [{self.session_id or 'ServiceBusPlugin'}] Calling {function_name} with args: {kwargs}")
-
-    def _send_friendly_notification(self, message: str):
-        """Send user-friendly notifications"""
-        print(f"📢 {message}")
-
-    ############################## KERNEL FUNCTION START #####################################
     @kernel_function(
         description="""
-        Send a workflow message to trigger agent actions in the rate lock system.
+        Send a workflow event to trigger agent actions in the rate lock system.
         
         USE THIS WHEN:
         - Triggering the next agent in the workflow
@@ -56,30 +36,23 @@ class ServiceBusPlugin:
         - exception_occurred: Activates exception handler
         
         COMMON USE CASES:
-        - "Send new_request message for loan LA12345"
+        - "Send new_request event for loan LA12345"
         - "Trigger context_retrieved for loan processing"
         - "Notify agents of rates_presented event"
-        - "Send compliance_passed message to continue workflow"
+        - "Send compliance_passed event to continue workflow"
         """
     )
-    async def send_workflow_message(self, message_type: Annotated[str, "Type of workflow message (new_request, context_retrieved, rates_presented, compliance_passed, exception_occurred)"],
+    async def send_workflow_event(self, message_type: Annotated[str, "Type of workflow event (new_request, context_retrieved, rates_presented, compliance_passed, exception_occurred)"],
                                    loan_application_id: Annotated[str, "Loan application ID for the workflow"],
                                    message_data: Annotated[str, "Message payload as JSON string"],
                                    correlation_id: Annotated[str, "Optional correlation ID for tracking"] = None) -> Annotated[Dict[str, Any], "Returns message sending status and details."]:
-        
-        self._log_function_call("send_workflow_message", message_type=message_type, loan_application_id=loan_application_id)
-        self._send_friendly_notification(f"📨 Sending workflow message: {message_type} for loan {loan_application_id}...")
         
         if not message_type or not loan_application_id or not message_data:
             raise ValueError("message_type, loan_application_id, and message_data are required")
         
         try:
-            # Parse message data
-            try:
-                data_payload = json.loads(message_data)
-            except json.JSONDecodeError:
-                print(f"⚠ Invalid JSON in message_data, wrapping as string: {message_data}")
-                data_payload = {"raw_data": message_data}
+            # Parse message data - must be valid JSON
+            data_payload = json.loads(message_data)
             
             # Send message
             success = await servicebus_operations.send_workflow_message(
@@ -90,7 +63,6 @@ class ServiceBusPlugin:
             )
             
             if success:
-                self._send_friendly_notification(f"✅ Workflow message sent successfully")
                 return {
                     "success": True,
                     "message_type": message_type,
@@ -100,22 +72,22 @@ class ServiceBusPlugin:
                     "message": f"Workflow message '{message_type}' sent for loan {loan_application_id}"
                 }
             else:
-                self._send_friendly_notification(f"❌ Failed to send workflow message")
-                return {
-                    "success": False,
-                    "error": "Failed to send workflow message",
-                    "message_type": message_type,
-                    "loan_application_id": loan_application_id
-                }
+                error_msg = "Failed to send workflow message"
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
                 
+        except json.JSONDecodeError as e:
+            error_msg = f"Invalid JSON in message_data: {str(e)}"
+            logger.error(error_msg)
+            raise
         except Exception as e:
-            print(f"❌ Error sending workflow message: {str(e)}")
-            self._send_friendly_notification(f"❌ Error sending workflow message")
-            return {"success": False, "error": str(e)}
+            error_msg = f"Error sending workflow message: {str(e)}"
+            logger.error(error_msg)
+            raise
 
     @kernel_function(
         description="""
-        Send an audit message to record agent actions and system events.
+        Send an audit log to record agent actions and system events.
         
         USE THIS WHEN:
         - Recording agent actions for compliance
@@ -126,24 +98,17 @@ class ServiceBusPlugin:
         Actions: EMAIL_PROCESSED, CONTEXT_RETRIEVED, RATES_GENERATED, COMPLIANCE_CHECKED, LOCK_CONFIRMED, EXCEPTION_ESCALATED
         """
     )
-    async def send_audit_message(self, agent_name: Annotated[str, "Name of the agent performing the action"],
+    async def send_audit_log(self, agent_name: Annotated[str, "Name of the agent performing the action"],
                                 action: Annotated[str, "Action being performed (EMAIL_PROCESSED, CONTEXT_RETRIEVED, RATES_GENERATED, COMPLIANCE_CHECKED, LOCK_CONFIRMED, EXCEPTION_ESCALATED)"],
                                 loan_application_id: Annotated[str, "Loan application ID associated with the action"],
-                                audit_data: Annotated[str, "Audit details as JSON string"]) -> Annotated[Dict[str, Any], "Returns audit message sending status."]:
-        
-        self._log_function_call("send_audit_message", agent_name=agent_name, action=action)
-        self._send_friendly_notification(f"📋 Sending audit message: {agent_name} - {action}...")
+                                audit_data: Annotated[str, "Audit details as JSON string"]) -> Annotated[Dict[str, Any], "Returns audit log sending status."]:
         
         if not agent_name or not action or not loan_application_id or not audit_data:
             raise ValueError("agent_name, action, loan_application_id, and audit_data are required")
         
         try:
-            # Parse audit data
-            try:
-                data_payload = json.loads(audit_data)
-            except json.JSONDecodeError:
-                print(f"⚠ Invalid JSON in audit_data, wrapping as string: {audit_data}")
-                data_payload = {"raw_data": audit_data}
+            # Parse audit data - must be valid JSON
+            data_payload = json.loads(audit_data)
             
             # Send message
             success = await servicebus_operations.send_audit_message(
@@ -154,32 +119,31 @@ class ServiceBusPlugin:
             )
             
             if success:
-                self._send_friendly_notification(f"✅ Audit message sent successfully")
                 return {
                     "success": True,
                     "agent_name": agent_name,
                     "action": action,
                     "loan_application_id": loan_application_id,
                     "sent_at": datetime.utcnow().isoformat(),
-                    "message": f"Audit message sent for {agent_name} - {action}"
+                    "message": f"Audit log sent for {agent_name} - {action}"
                 }
             else:
-                self._send_friendly_notification(f"❌ Failed to send audit message")
-                return {
-                    "success": False,
-                    "error": "Failed to send audit message",
-                    "agent_name": agent_name,
-                    "action": action
-                }
+                error_msg = "Failed to send audit log"
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
                 
+        except json.JSONDecodeError as e:
+            error_msg = f"Invalid JSON in audit_data: {str(e)}"
+            logger.error(error_msg)
+            raise
         except Exception as e:
-            print(f"❌ Error sending audit message: {str(e)}")
-            self._send_friendly_notification(f"❌ Error sending audit message")
-            return {"success": False, "error": str(e)}
+            error_msg = f"Error sending audit log: {str(e)}"
+            logger.error(error_msg)
+            raise
 
     @kernel_function(
         description="""
-        Send an exception alert for issues requiring human intervention.
+        Send an exception for issues requiring human intervention.
         
         USE THIS WHEN:
         - Agents encounter unresolvable errors
@@ -191,24 +155,17 @@ class ServiceBusPlugin:
         - COMPLIANCE_VIOLATION, TECHNICAL_ERROR, DATA_VALIDATION_FAILURE, SYSTEM_TIMEOUT, MISSING_DOCUMENTATION
         """
     )
-    async def send_exception_alert(self, exception_type: Annotated[str, "Type of exception (COMPLIANCE_VIOLATION, TECHNICAL_ERROR, DATA_VALIDATION_FAILURE, SYSTEM_TIMEOUT, MISSING_DOCUMENTATION)"],
+    async def send_exception(self, exception_type: Annotated[str, "Type of exception (COMPLIANCE_VIOLATION, TECHNICAL_ERROR, DATA_VALIDATION_FAILURE, SYSTEM_TIMEOUT, MISSING_DOCUMENTATION)"],
                                   priority: Annotated[str, "Priority level (high, medium, low)"],
                                   loan_application_id: Annotated[str, "Loan application ID associated with the exception"],
-                                  exception_data: Annotated[str, "Exception details as JSON string"]) -> Annotated[Dict[str, Any], "Returns exception alert sending status."]:
-        
-        self._log_function_call("send_exception_alert", exception_type=exception_type, priority=priority)
-        self._send_friendly_notification(f"🚨 Sending {priority} priority exception alert: {exception_type}...")
+                                  exception_data: Annotated[str, "Exception details as JSON string"]) -> Annotated[Dict[str, Any], "Returns exception sending status."]:
         
         if not exception_type or not priority or not loan_application_id or not exception_data:
             raise ValueError("exception_type, priority, loan_application_id, and exception_data are required")
         
         try:
-            # Parse exception data
-            try:
-                data_payload = json.loads(exception_data)
-            except json.JSONDecodeError:
-                print(f"⚠ Invalid JSON in exception_data, wrapping as string: {exception_data}")
-                data_payload = {"raw_data": exception_data}
+            # Parse exception data - must be valid JSON
+            data_payload = json.loads(exception_data)
             
             # Send message
             success = await servicebus_operations.send_exception_alert(
@@ -219,49 +176,134 @@ class ServiceBusPlugin:
             )
             
             if success:
-                self._send_friendly_notification(f"✅ Exception alert sent successfully")
                 return {
                     "success": True,
                     "exception_type": exception_type,
                     "priority": priority,
                     "loan_application_id": loan_application_id,
                     "sent_at": datetime.utcnow().isoformat(),
-                    "message": f"{priority.upper()} priority exception alert sent: {exception_type}"
+                    "message": f"{priority.upper()} priority exception sent: {exception_type}"
                 }
             else:
-                self._send_friendly_notification(f"❌ Failed to send exception alert")
-                return {
-                    "success": False,
-                    "error": "Failed to send exception alert",
-                    "exception_type": exception_type,
-                    "priority": priority
-                }
+                error_msg = "Failed to send exception"
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
                 
+        except json.JSONDecodeError as e:
+            error_msg = f"Invalid JSON in exception_data: {str(e)}"
+            logger.error(error_msg)
+            raise
         except Exception as e:
-            print(f"❌ Error sending exception alert: {str(e)}")
-            self._send_friendly_notification(f"❌ Error sending exception alert")
-            return {"success": False, "error": str(e)}
+            error_msg = f"Error sending exception: {str(e)}"
+            logger.error(error_msg)
+            raise
+
+    @kernel_function(
+        description="""
+        Send a message to a borrower or user via the outbound communication queue.
+        
+        USE THIS WHEN:
+        - Sending acknowledgment messages to borrowers
+        - Requesting missing information from users
+        - Sending rate lock confirmations
+        - Notifying users of exceptions or issues
+        - Sending status updates to borrowers
+        
+        CAPABILITIES:
+        - Sends messages via outbound-email-queue (currently email via Logic Apps)
+        - Future: Will support chat, SMS, and other channels
+        - Supports custom subject and body
+        - Can include attachments
+        - Tracks via loan_application_id
+        
+        COMMON USE CASES:
+        - "Send acknowledgment to borrower"
+        - "Request missing loan ID from user"
+        - "Send rate lock confirmation to john@example.com"
+        - "Notify borrower about compliance issue"
+        
+        Returns success status and message tracking details.
+        """
+    )
+    async def send_outbound_message(
+        self,
+        recipient: Annotated[str, "Recipient identifier (email, phone, chat ID, etc.)"],
+        subject: Annotated[str, "Message subject line"],
+        body: Annotated[str, "Message body content"],
+        loan_application_id: Annotated[str, "Loan application ID or tracking reference"] = "SYSTEM",
+        attachments: Annotated[str, "Optional attachments as JSON array string"] = "[]"
+    ) -> Annotated[Dict[str, Any], "Returns message sending status and tracking details."]:
+        """
+        Send message via outbound communication queue (currently email, future: chat, SMS).
+        """
+        
+        if not recipient or not subject or not body:
+            raise ValueError("recipient, subject, and body are required")
+        
+        try:
+            # Parse attachments if provided - must be valid JSON
+            attachments_list = json.loads(attachments) if attachments else []
+            
+            # Create message payload (currently email format, future: multi-channel)
+            message_payload = {
+                "recipient": recipient,  # Could be email, phone, chat ID, etc.
+                "subject": subject,
+                "body": body,
+                "attachments": attachments_list,
+                "sent_at": datetime.utcnow().isoformat()
+            }
+            
+            # Send to outbound confirmations queue
+            success = await servicebus_operations.send_message(
+                destination_name="outbound_confirmations",
+                message_body=json.dumps(message_payload),
+                correlation_id=loan_application_id,
+                destination_type="queue"
+            )
+            
+            if success:
+                return {
+                    "success": True,
+                    "recipient": recipient,
+                    "subject": subject,
+                    "loan_application_id": loan_application_id,
+                    "queued_at": datetime.utcnow().isoformat(),
+                    "message": f"Message '{subject}' queued for delivery to {recipient}"
+                }
+            else:
+                error_msg = "Failed to queue message for delivery"
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
+                
+        except json.JSONDecodeError as e:
+            error_msg = f"Invalid JSON in attachments: {str(e)}"
+            logger.error(error_msg)
+            raise
+        except Exception as e:
+            error_msg = f"Error sending outbound message: {str(e)}"
+            logger.error(error_msg)
+            raise
 
     async def send_message_to_topic(self, topic_name: str, message_body: str = None, correlation_id: str = None, 
-                                   message_type: str = None, loan_application_id: str = None, message_data: dict = None) -> bool:
+                                   message_type: str = None, loan_application_id: str = None, message_data: dict = None,
+                                   target_agent: str = None, priority: str = 'normal') -> bool:
         """
-        Send a message to a specific Service Bus topic.
+        Send a message to a specific Service Bus topic with routing metadata.
         
         Args:
             topic_name (str): Name of the topic to send to
             message_body (str, optional): Message content (if not provided, will be generated from other params)
             correlation_id (str, optional): Correlation ID for tracking
-            message_type (str, optional): Type of message for workflow coordination
+            message_type (str, optional): Type of message for SQL filter routing (e.g., 'email_parsed', 'context_retrieved')
             loan_application_id (str, optional): Loan application ID for tracking
             message_data (dict, optional): Additional message data
+            target_agent (str, optional): Target agent name for routing (e.g., 'loan_context', 'rate_quote')
+            priority (str): Message priority - 'normal', 'high', or 'critical' (default: 'normal')
             
         Returns:
             bool: True if successful, False otherwise
         """
         try:
-            self._log_function_call("send_message_to_topic", topic_name=topic_name, message_type=message_type, loan_application_id=loan_application_id)
-            self._send_friendly_notification(f"📨 Sending message to topic: {topic_name}...")
-            
             # If message_body is not provided, create it from other parameters
             if not message_body:
                 message_content = {
@@ -279,20 +321,21 @@ class ServiceBusPlugin:
             success = await servicebus_operations.send_message_to_topic(
                 topic_name=topic_name,
                 message_body=message_body,
-                correlation_id=correlation_id
+                correlation_id=correlation_id,
+                message_type=message_type,
+                target_agent=target_agent,
+                priority=priority
             )
             
-            if success:
-                self._send_friendly_notification(f"✅ Message sent to topic successfully")
-            else:
-                self._send_friendly_notification(f"❌ Failed to send message to topic")
-                
-            return success
+            if not success:
+                raise RuntimeError("Failed to send message to topic")
             
+            return success
+                
         except Exception as e:
-            print(f"❌ Error sending message to topic: {str(e)}")
-            self._send_friendly_notification(f"❌ Error sending message to topic")
-            return False
+            error_msg = f"Error sending message to topic: {str(e)}"
+            logger.error(error_msg)
+            raise
 
     async def send_message_to_queue(self, queue_name: str, message_body: str = None, correlation_id: str = None, 
                                    message_type: str = None, loan_application_id: str = None, message_data: dict = None) -> bool:
@@ -311,9 +354,6 @@ class ServiceBusPlugin:
             bool: True if successful, False otherwise
         """
         try:
-            self._log_function_call("send_message_to_queue", queue_name=queue_name, message_type=message_type, loan_application_id=loan_application_id)
-            self._send_friendly_notification(f"📨 Sending message to queue: {queue_name}...")
-            
             # If message_body is not provided, create it from other parameters
             if not message_body:
                 message_content = {
@@ -335,21 +375,16 @@ class ServiceBusPlugin:
                 destination_type='queue'
             )
             
-            if success:
-                self._send_friendly_notification(f"✅ Message sent to queue successfully")
-            else:
-                self._send_friendly_notification(f"❌ Failed to send message to queue")
+            if not success:
+                raise RuntimeError("Failed to send message to queue")
                 
             return success
             
         except Exception as e:
-            print(f"❌ Error sending message to queue: {str(e)}")
-            self._send_friendly_notification(f"❌ Error sending message to queue")
-            return False
+            error_msg = f"Error sending message to queue: {str(e)}"
+            logger.error(error_msg)
+            raise
 
     async def close(self):
-        """
-        Clean up resources when the plugin is no longer needed.
-        Note: ServiceBusOperations uses per-operation clients, so no cleanup needed.
-        """
-        print("Service Bus plugin resources cleaned up")
+        """Clean up resources when the plugin is no longer needed."""
+        pass

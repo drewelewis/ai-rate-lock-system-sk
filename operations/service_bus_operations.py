@@ -160,15 +160,34 @@ class ServiceBusOperations:
             console_error(f"Failed to create Service Bus client: {e}", "ServiceBusOps")
             raise
 
-    async def send_message(self, destination_name: str, message_body: str, correlation_id: Optional[str] = None, destination_type: str = 'topic') -> bool:
+    async def send_message(
+        self, 
+        destination_name: str, 
+        message_body: str, 
+        correlation_id: Optional[str] = None, 
+        destination_type: str = 'topic',
+        message_type: Optional[str] = None,
+        target_agent: Optional[str] = None,
+        priority: str = 'normal'
+    ) -> bool:
         """
-        Send a message to a specific Service Bus topic or queue.
+        Send a message to a specific Service Bus topic or queue with routing metadata.
+        
+        For topics, adds application_properties for SQL subscription filter routing:
+        - MessageType: Type of message for filter-based routing
+        - TargetAgent: Intended agent recipient  
+        - Priority: Message priority (normal, high, critical)
+        - LoanApplicationId: Correlation tracking
+        - Timestamp: Message creation time
         
         Args:
             destination_name (str): The logical name of the topic or queue to send the message to.
-            message_body (str): The message payload as raw text.
+            message_body (str): The message payload as raw text or JSON.
             correlation_id (str, optional): A correlation ID for tracking.
             destination_type (str): Either 'topic' or 'queue'
+            message_type (str, optional): Message type for routing (e.g., 'email_parsed', 'context_retrieved')
+            target_agent (str, optional): Target agent name (e.g., 'loan_context', 'rate_quote')
+            priority (str): Message priority - 'normal', 'high', or 'critical' (default: 'normal')
             
         Returns:
             bool: True if successful, False otherwise.
@@ -195,12 +214,36 @@ class ServiceBusOperations:
                 sender = sender_method(queue_name=actual_destination_name)
                 
             async with client, sender:
-                # Send raw string content directly
+                # Determine content type based on message body
+                content_type = "application/json" if message_body.strip().startswith('{') else "text/plain"
+                
+                # Create message with routing metadata
                 message_to_send = ServiceBusMessage(
                     body=message_body,
-                    content_type="text/plain",
+                    content_type=content_type,
                     correlation_id=correlation_id
                 )
+                
+                # Add routing metadata for topics (enables SQL subscription filters)
+                if destination_type == 'topic':
+                    routing_properties = {
+                        "MessageType": message_type or "unknown",
+                        "TargetAgent": target_agent or "unknown",
+                        "Priority": priority,
+                        "Timestamp": datetime.utcnow().isoformat()
+                    }
+                    
+                    # Add loan application ID if provided as correlation_id
+                    if correlation_id:
+                        routing_properties["LoanApplicationId"] = correlation_id
+                    
+                    message_to_send.application_properties = routing_properties
+                    
+                    console_debug(
+                        f"📋 Routing metadata: MessageType={message_type}, TargetAgent={target_agent}, Priority={priority}", 
+                        "ServiceBusOps"
+                    )
+                
                 await sender.send_messages(message_to_send)
             
             # Explicitly close the credential to clean up HTTP sessions
@@ -716,26 +759,40 @@ Loan ID: {loan_application_id}
 Details: {exception_data}
 Timestamp: {datetime.utcnow().isoformat()}"""
 
-            # Send to exception alerts topic
+            # Send to exception alerts topic with routing metadata
             return await self.send_message(
                 destination_name="exception_alerts",
                 message_body=alert_message,
                 correlation_id=loan_application_id,
-                destination_type="topic"
+                destination_type="topic",
+                message_type="exception_alert",
+                target_agent="exception_handler",
+                priority=priority  # Use the priority parameter
             )
             
         except Exception as e:
             console_error(f"Failed to send exception alert: {e}", "ServiceBusOps")
             return False
 
-    async def send_message_to_topic(self, topic_name: str, message_body: str, correlation_id: Optional[str] = None) -> bool:
+    async def send_message_to_topic(
+        self, 
+        topic_name: str, 
+        message_body: str, 
+        correlation_id: Optional[str] = None,
+        message_type: Optional[str] = None,
+        target_agent: Optional[str] = None,
+        priority: str = 'normal'
+    ) -> bool:
         """
-        Send a message to a specific Service Bus topic (alias for send_message with topic type).
+        Send a message to a specific Service Bus topic with routing metadata.
         
         Args:
             topic_name (str): The logical name of the topic to send the message to
-            message_body (str): The message payload as raw text
+            message_body (str): The message payload as raw text or JSON
             correlation_id (str, optional): A correlation ID for tracking
+            message_type (str, optional): Message type for SQL filter routing
+            target_agent (str, optional): Target agent name for routing
+            priority (str): Message priority (normal, high, critical)
             
         Returns:
             bool: True if successful, False otherwise
@@ -744,7 +801,10 @@ Timestamp: {datetime.utcnow().isoformat()}"""
             destination_name=topic_name,
             message_body=message_body,
             correlation_id=correlation_id,
-            destination_type="topic"
+            destination_type="topic",
+            message_type=message_type,
+            target_agent=target_agent,
+            priority=priority
         )
 
     async def send_audit_message(self, agent_name: str, action: str, loan_application_id: str, audit_data: Dict[str, Any]) -> bool:
@@ -770,12 +830,15 @@ Timestamp: {datetime.utcnow().isoformat()}"""
                 "timestamp": datetime.utcnow().isoformat()
             }
 
-            # Send to audit events topic (consolidated)
+            # Send to audit events topic with routing metadata
             return await self.send_message(
                 destination_name="audit_events",
                 message_body=json.dumps(audit_message),
                 correlation_id=loan_application_id,
-                destination_type="topic"
+                destination_type="topic",
+                message_type="audit_log",
+                target_agent="audit_logging",
+                priority="normal"
             )
             
         except Exception as e:
