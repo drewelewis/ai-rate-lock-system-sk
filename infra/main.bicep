@@ -57,7 +57,7 @@ module cosmosDb 'core/database/cosmos.bicep' = {
   }
 }
 
-module serviceBus 'core/messaging/servicebus.bicep' = {
+module serviceBus 'core/messaging/servicebus-single-topic.bicep' = {
   name: 'servicebus'
   params: {
     name: serviceBusNamespaceName
@@ -151,7 +151,7 @@ output AZURE_OPENAI_ENDPOINT string = openAI.outputs.endpoint
 output AZURE_COSMOSDB_ACCOUNT_NAME string = cosmosDbAccountName
 output AZURE_COSMOSDB_ENDPOINT string = cosmosDb.outputs.endpoint
 output AZURE_SERVICEBUS_NAMESPACE_NAME string = serviceBusNamespaceName
-output AZURE_SERVICEBUS_ENDPOINT string = serviceBus.outputs.endpoint
+output AZURE_SERVICEBUS_ENDPOINT string = serviceBus.outputs.serviceBusEndpoint
 output AZURE_LOG_ANALYTICS_WORKSPACE_NAME string = logAnalyticsWorkspaceName
 output AZURE_APPLICATION_INSIGHTS_NAME string = applicationInsightsName
 output OFFICE365_CONNECTION_ID string = apiConnections.outputs.office365ConnectionId

@@ -318,13 +318,14 @@ class ServiceBusPlugin:
             if not correlation_id and loan_application_id:
                 correlation_id = loan_application_id
             
+            # Pass routing metadata to operations layer for SQL filter routing
             success = await servicebus_operations.send_message_to_topic(
                 topic_name=topic_name,
                 message_body=message_body,
                 correlation_id=correlation_id,
-                message_type=message_type,
-                target_agent=target_agent,
-                priority=priority
+                message_type=message_type,        # ✅ Pass message type for SQL filters
+                target_agent=target_agent,        # ✅ Pass target agent for routing
+                priority=priority                  # ✅ Pass priority for exception filtering
             )
             
             if not success:
@@ -384,6 +385,30 @@ class ServiceBusPlugin:
             error_msg = f"Error sending message to queue: {str(e)}"
             logger.error(error_msg)
             raise
+    
+    # Convenience aliases for simplified agent usage
+    
+    async def send_audit_event(self, action: str, loan_application_id: str, data: Dict[str, Any]):
+        """Convenience method for sending audit events."""
+        return await self.send_audit_log(
+            agent_name="system",
+            action=action,
+            loan_application_id=loan_application_id,
+            audit_data=json.dumps(data)
+        )
+    
+    async def send_exception_alert(self, exception_type: str, priority: str, message: str, loan_application_id: str):
+        """Convenience method for sending exception alerts."""
+        exception_data = {
+            "message": message,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        return await self.send_exception(
+            exception_type=exception_type,
+            priority=priority,
+            loan_application_id=loan_application_id,
+            exception_data=json.dumps(exception_data)
+        )
 
     async def close(self):
         """Clean up resources when the plugin is no longer needed."""

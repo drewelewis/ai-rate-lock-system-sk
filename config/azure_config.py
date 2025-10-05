@@ -49,21 +49,26 @@ class AzureConfig:
         """Get high priority exceptions queue name"""
         return os.getenv('AZURE_SERVICEBUS_QUEUE_HIGH_PRIORITY_EXCEPTIONS', 'high-priority-exceptions')
     
+    def get_servicebus_topic_workflow_events(self) -> str:
+        """Get workflow events topic name (single topic for all agent coordination, audit, compliance, exceptions)"""
+        return os.getenv('AZURE_SERVICEBUS_TOPIC_WORKFLOW_EVENTS', 'agent-workflow-events')
+    
+    # Legacy methods for backward compatibility with old multi-topic architecture
     def get_servicebus_topic_loan_lifecycle(self) -> str:
-        """Get loan lifecycle events topic name (main workflow coordination)"""
-        return os.getenv('AZURE_SERVICEBUS_TOPIC_LOAN_LIFECYCLE', 'loan-lifecycle-events')
+        """Legacy - now using single workflow events topic"""
+        return self.get_servicebus_topic_workflow_events()
     
     def get_servicebus_topic_audit_events(self) -> str:
-        """Get audit events topic name (all audit logging)"""
-        return os.getenv('AZURE_SERVICEBUS_TOPIC_AUDIT_EVENTS', 'audit-events')
+        """Legacy - now using single workflow events topic"""
+        return self.get_servicebus_topic_workflow_events()
     
     def get_servicebus_topic_compliance_events(self) -> str:
-        """Get compliance events topic name (regulatory notifications)"""
-        return os.getenv('AZURE_SERVICEBUS_TOPIC_COMPLIANCE_EVENTS', 'compliance-events')
+        """Legacy - now using single workflow events topic"""
+        return self.get_servicebus_topic_workflow_events()
     
     def get_servicebus_topic_exception_alerts(self) -> str:
-        """Get exception alerts topic name (error handling)"""
-        return os.getenv('AZURE_SERVICEBUS_TOPIC_EXCEPTION_ALERTS', 'exception-alerts')
+        """Legacy - now using single workflow events topic"""
+        return self.get_servicebus_topic_workflow_events()
     
     def get_container_registry(self) -> str:
         """Get Container Registry endpoint"""

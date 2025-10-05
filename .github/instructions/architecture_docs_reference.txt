@@ -1,0 +1,16 @@
+
+## Key Architecture Documents (MUST READ BEFORE ANY AGENT WORK)
+
+1. **AUTONOMOUS_AGENT_ARCHITECTURE.md** - Proper Semantic Kernel plugin usage
+   - Why explicit plugin calls are WRONG
+   - How autonomous function calling works  
+   - LLM autonomously invokes plugins via FunctionChoiceBehavior.Auto()
+   - Flow diagrams showing proper architecture
+
+2. **AGENT_ARCHITECTURE_REFACTORING.md** - Migration guidance
+   - 76% code reduction goal (4,575 lines → 1,090 lines)
+   - Before/after code examples
+   - Phase-by-phase migration plan
+
+**⚠️ CRITICAL: ALWAYS consult these documents before implementing or modifying agents!**
+**If you forget these principles during conversation, re-read these documents!**

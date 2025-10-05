@@ -102,44 +102,44 @@ class AIRateLockSystem:
             'email_intake': {
                 'class': EmailIntakeAgent,
                 'queues': [self.azure_config.get_servicebus_queue_inbound_email()],
-                'topics': [self.azure_config.get_servicebus_topic_loan_lifecycle()],
+                'topics': [self.azure_config.get_servicebus_topic_workflow_events()],
                 'subscription': 'email-intake-subscription'
             },
             'loan_context': {
                 'class': LoanApplicationContextAgent,
                 'queues': [],
-                'topics': [self.azure_config.get_servicebus_topic_loan_lifecycle()],
+                'topics': [self.azure_config.get_servicebus_topic_workflow_events()],
                 'subscription': 'loan-context-subscription'
             },
             'rate_quote': {
                 'class': RateQuoteAgent,
                 'queues': [],
-                'topics': [self.azure_config.get_servicebus_topic_loan_lifecycle()],
+                'topics': [self.azure_config.get_servicebus_topic_workflow_events()],
                 'subscription': 'rate-quote-subscription'
             },
             'compliance_risk': {
                 'class': ComplianceRiskAgent,
                 'queues': [],
-                'topics': [self.azure_config.get_servicebus_topic_loan_lifecycle(), self.azure_config.get_servicebus_topic_compliance_events()],
+                'topics': [self.azure_config.get_servicebus_topic_workflow_events()],
                 'subscription': 'compliance-subscription'
             },
             'lock_confirmation': {
                 'class': LockConfirmationAgent,
                 'queues': [self.azure_config.get_servicebus_queue_outbound_confirmations()],
-                'topics': [self.azure_config.get_servicebus_topic_loan_lifecycle()],
+                'topics': [self.azure_config.get_servicebus_topic_workflow_events()],
                 'subscription': 'lock-confirmation-subscription'
             },
             'audit_logging': {
                 'class': AuditLoggingAgent,
                 'queues': [],
-                'topics': [self.azure_config.get_servicebus_topic_audit_events()],
-                'subscription': 'audit-logging-subscription'
+                'topics': [self.azure_config.get_servicebus_topic_workflow_events()],
+                'subscription': 'audit-subscription'
             },
             'exception_handler': {
                 'class': ExceptionHandlerAgent,
                 'queues': [self.azure_config.get_servicebus_queue_high_priority_exceptions()],
-                'topics': [self.azure_config.get_servicebus_topic_exception_alerts()],
-                'subscription': 'exception-handler-agent'
+                'topics': [self.azure_config.get_servicebus_topic_workflow_events()],
+                'subscription': 'exception-subscription'
             }
         }
 
@@ -202,8 +202,8 @@ class AIRateLockSystem:
 
     async def _agent_message_listener(self, agent_name: str, agent_data: Dict[str, Any]):
         """
-        Event-driven message listener for a specific agent.
-        Uses Service Bus async receivers that block until messages arrive (NO POLLING).
+        Generic event-driven message listener - NO agent-specific logic.
+        Simply passes messages to agent's handle_message() method.
         """
         agent_instance = agent_data['instance']
         config = agent_data['config']
@@ -213,31 +213,12 @@ class AIRateLockSystem:
         queues = config.get('queues', [])
         subscription = config.get('subscription', f"{agent_name}-subscription")
         
-        logger.info(f"🎧 {agent_name} event-driven listener starting - topics: {topics}, queues: {queues}")
+        logger.info(f"🎧 {agent_name} listener starting - topics: {topics}, queues: {queues}")
         
-        # Create message handler for this agent
-        async def handle_agent_message(message: Dict[str, Any]):
-            """Process a single message for this agent."""
-            try:
-                logger.info(f"📨 {agent_name} received message {message.get('message_id', 'unknown')}")
-                
-                # Route message to appropriate agent handler based on agent type
-                if agent_name == 'email_intake':
-                    # Email intake expects raw text for LLM processing
-                    message_body = message.get('body', str(message))
-                    await agent_instance.handle_message(message_body)
-                elif agent_name == 'rate_quote':
-                    # Rate quote expects full message dict
-                    await agent_instance.handle_message(message)
-                else:
-                    # Default: pass full message dict
-                    await agent_instance.handle_message(message)
-                
-                logger.info(f"✅ {agent_name} processed message {message.get('message_id', 'unknown')} successfully")
-                
-            except Exception as e:
-                logger.error(f"❌ {agent_name} failed to process message: {e}")
-                raise  # Re-raise to trigger message abandonment
+        # Generic message handler - same for ALL agents
+        async def handle_message(message: Dict[str, Any]):
+            """Generic message handler - delegates to agent."""
+            await agent_instance.handle_message(message)
         
         # Start listeners for all topics and queues
         listener_tasks = []
@@ -249,7 +230,7 @@ class AIRateLockSystem:
                     self.service_bus.listen_to_subscription(
                         topic_name=topic,
                         subscription_name=subscription,
-                        message_handler=handle_agent_message,
+                        message_handler=handle_message,
                         stop_event=stop_event
                     ),
                     name=f"{agent_name}_{topic}_listener"
@@ -262,7 +243,7 @@ class AIRateLockSystem:
                 listener_task = asyncio.create_task(
                     self.service_bus.listen_to_queue(
                         queue_name=queue,
-                        message_handler=handle_agent_message,
+                        message_handler=handle_message,
                         stop_event=stop_event
                     ),
                     name=f"{agent_name}_{queue}_listener"

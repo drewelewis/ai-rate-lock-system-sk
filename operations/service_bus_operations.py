@@ -35,6 +35,7 @@ class ServiceBusOperations:
         }
         
         self.topics = {
+            'agent-workflow-events': self.azure_config.get_servicebus_topic_workflow_events(),
             'loan_lifecycle': self.azure_config.get_servicebus_topic_loan_lifecycle(),
             'audit_events': self.azure_config.get_servicebus_topic_audit_events(),
             'compliance_events': self.azure_config.get_servicebus_topic_compliance_events(),
@@ -42,6 +43,113 @@ class ServiceBusOperations:
         }
         
         console_info(f"Service Bus Operations initialized for namespace: {self.servicebus_namespace}", "ServiceBusOps")
+
+    def _parse_message_body(self, raw_body) -> Any:
+        """
+        Parse raw Service Bus message body into a clean Python object.
+        
+        Handles various body formats:
+        - bytes: decode to string
+        - iterable: join parts and decode
+        - JSON string: parse to dict
+        - plain string: return as-is
+        
+        Args:
+            raw_body: Raw message body from Service Bus
+            
+        Returns:
+            Parsed message body (dict for JSON, string for plain text)
+        """
+        # Handle None/empty body
+        if not raw_body:
+            return ""
+        
+        # Convert bytes/iterable to string
+        if isinstance(raw_body, bytes):
+            body_str = raw_body.decode('utf-8')
+        elif isinstance(raw_body, str):
+            body_str = raw_body
+        elif hasattr(raw_body, '__iter__'):
+            # Handle iterable body (multiple parts)
+            body_parts = list(raw_body)
+            body_str = ''.join(
+                part.decode('utf-8') if isinstance(part, bytes) else str(part) 
+                for part in body_parts
+            )
+        else:
+            body_str = str(raw_body)
+        
+        # Try to parse as JSON, return dict if successful
+        if body_str:
+            try:
+                return json.loads(body_str)
+            except json.JSONDecodeError:
+                # Not JSON, return as plain string
+                return body_str
+        
+        return ""
+
+    def _create_standard_message(self, msg) -> Dict[str, Any]:
+        """
+        Create a standardized message structure for agent consumption.
+        
+        This provides a clean, consistent interface regardless of whether
+        the message came from a queue or topic subscription.
+        
+        Returns a dict with structure:
+        {
+            'message_type': 'workflow_event_type',  # Extracted from body for convenience
+            'loan_application_id': 'APP-123',       # Extracted from body for convenience
+            'body': {...},                          # Full parsed message body (dict or string)
+            'metadata': {                           # All Service Bus metadata
+                'correlation_id': '...',
+                'message_id': '...',
+                'content_type': '...',
+                'properties': {...},
+                'delivery_count': 1,
+                'enqueued_time': '...'
+            }
+        }
+        
+        Args:
+            msg: Azure Service Bus ReceivedMessage object
+            
+        Returns:
+            Standardized message dictionary
+        """
+        # Parse the message body
+        parsed_body = self._parse_message_body(msg.body)
+        
+        # Extract message_type - check multiple sources in order of preference:
+        # 1. Application properties (MessageType set during send)
+        # 2. Message body (message_type field)
+        message_type = None
+        loan_application_id = None
+        
+        # First, check application properties for routing metadata
+        if hasattr(msg, 'application_properties') and msg.application_properties:
+            message_type = msg.application_properties.get('MessageType')
+            loan_application_id = msg.application_properties.get('LoanApplicationId')
+        
+        # Then check message body if it's a dict (can override if explicitly set in body)
+        if isinstance(parsed_body, dict):
+            message_type = parsed_body.get('message_type') or message_type
+            loan_application_id = parsed_body.get('loan_application_id') or loan_application_id
+        
+        # Create standardized structure
+        return {
+            'message_type': message_type,
+            'loan_application_id': loan_application_id,
+            'body': parsed_body,
+            'metadata': {
+                'correlation_id': msg.correlation_id,
+                'message_id': msg.message_id,
+                'content_type': msg.content_type,
+                'properties': dict(msg.application_properties) if msg.application_properties else {},
+                'delivery_count': msg.delivery_count,
+                'enqueued_time': msg.enqueued_time_utc.isoformat() if msg.enqueued_time_utc else None
+            }
+        }
 
     def _parse_email_content(self, raw_content: str) -> Dict[str, Any]:
         """
@@ -415,8 +523,9 @@ class ServiceBusOperations:
             async with receiver:
                 while not stop_event.is_set():
                     try:
-                        # Receive messages (blocks until messages arrive or timeout)
-                        received_msgs = await receiver.receive_messages(max_wait_time=60, max_message_count=10)
+                        # Receive messages in smaller batches to prevent overwhelming OpenAI
+                        # Reduced from 10 to 3 to align with MAX_CONCURRENT_OPENAI_CALLS
+                        received_msgs = await receiver.receive_messages(max_wait_time=60, max_message_count=3)
                         
                         if not received_msgs:
                             # Timeout reached, check stop_event and continue
@@ -432,35 +541,8 @@ class ServiceBusOperations:
                                 continue
                             
                             try:
-                                # Parse message body
-                                if msg.body:
-                                    if hasattr(msg.body, '__iter__') and not isinstance(msg.body, (str, bytes)):
-                                        body_parts = list(msg.body)
-                                        body_str = ''.join(part.decode('utf-8') if isinstance(part, bytes) else str(part) for part in body_parts)
-                                    else:
-                                        body_str = msg.body.decode('utf-8') if isinstance(msg.body, bytes) else str(msg.body)
-                                else:
-                                    body_str = ""
-                                
-                                # Try to parse as JSON, fall back to text
-                                if body_str:
-                                    try:
-                                        parsed_body = json.loads(body_str)
-                                    except json.JSONDecodeError:
-                                        parsed_body = {"raw_content": body_str}
-                                else:
-                                    parsed_body = {"raw_content": ""}
-                                
-                                # Create message dict
-                                message_dict = {
-                                    'body': parsed_body,
-                                    'content_type': msg.content_type,
-                                    'correlation_id': msg.correlation_id,
-                                    'message_id': msg.message_id,
-                                    'properties': dict(msg.application_properties) if msg.application_properties else {},
-                                    'delivery_count': msg.delivery_count,
-                                    'enqueued_time': msg.enqueued_time_utc.isoformat() if msg.enqueued_time_utc else None
-                                }
+                                # Create standardized message structure
+                                message_dict = self._create_standard_message(msg)
                                 
                                 # Call the message handler
                                 await message_handler(message_dict)
@@ -533,8 +615,9 @@ class ServiceBusOperations:
             async with receiver:
                 while not stop_event.is_set():
                     try:
-                        # Receive messages (blocks until messages arrive or timeout)
-                        received_msgs = await receiver.receive_messages(max_wait_time=60, max_message_count=10)
+                        # Receive messages in smaller batches to prevent overwhelming OpenAI
+                        # Reduced from 10 to 3 to align with MAX_CONCURRENT_OPENAI_CALLS
+                        received_msgs = await receiver.receive_messages(max_wait_time=60, max_message_count=3)
                         
                         if not received_msgs:
                             # Timeout reached, check stop_event and continue
@@ -550,33 +633,8 @@ class ServiceBusOperations:
                                 continue
                             
                             try:
-                                # Parse message body
-                                if msg.body:
-                                    if isinstance(msg.body, bytes):
-                                        body_str = msg.body.decode('utf-8')
-                                    elif isinstance(msg.body, str):
-                                        body_str = msg.body
-                                    elif hasattr(msg.body, '__iter__'):
-                                        body_parts = list(msg.body)
-                                        body_str = ''.join(part.decode('utf-8') if isinstance(part, bytes) else str(part) for part in body_parts)
-                                    else:
-                                        body_str = str(msg.body)
-                                else:
-                                    body_str = ""
-                                
-                                # All queue messages are raw text for LLM processing
-                                parsed_body = body_str
-                                
-                                # Create message dict
-                                message_dict = {
-                                    'body': parsed_body,
-                                    'content_type': msg.content_type,
-                                    'correlation_id': msg.correlation_id,
-                                    'message_id': msg.message_id,
-                                    'properties': dict(msg.application_properties) if msg.application_properties else {},
-                                    'delivery_count': msg.delivery_count,
-                                    'enqueued_time': msg.enqueued_time_utc.isoformat() if msg.enqueued_time_utc else None
-                                }
+                                # Create standardized message structure
+                                message_dict = self._create_standard_message(msg)
                                 
                                 # Call the message handler
                                 await message_handler(message_dict)
@@ -740,7 +798,7 @@ class ServiceBusOperations:
 
     async def send_exception_alert(self, exception_type: str, priority: str, loan_application_id: str, exception_data: str) -> bool:
         """
-        Send an exception alert to the exception handling topic.
+        Send an exception alert to the exception handling system.
         
         Args:
             exception_type (str): Type of exception
@@ -752,22 +810,43 @@ class ServiceBusOperations:
             bool: True if successful, False otherwise
         """
         try:
-            # Create exception alert message
-            alert_message = f"""Exception Alert: {exception_type}
-Priority: {priority}
-Loan ID: {loan_application_id}
-Details: {exception_data}
-Timestamp: {datetime.utcnow().isoformat()}"""
+            # Parse exception data if it's a JSON string
+            if isinstance(exception_data, str):
+                try:
+                    exception_details = json.loads(exception_data)
+                except json.JSONDecodeError:
+                    exception_details = {"raw_data": exception_data}
+            else:
+                exception_details = exception_data
+            
+            # Create structured exception message body
+            message_body = {
+                "message_type": "exception_alert",
+                "loan_application_id": loan_application_id,
+                "exception_type": exception_type,
+                "priority": priority,
+                "exception_data": exception_details,
+                "timestamp": datetime.utcnow().isoformat()
+            }
 
-            # Send to exception alerts topic with routing metadata
+            # High priority exceptions go to dedicated queue for immediate attention
+            if priority == "high" or priority == "critical":
+                destination = "high-priority-exceptions"
+                destination_type = "queue"
+            else:
+                # Normal exceptions go to workflow events topic
+                destination = "agent-workflow-events"
+                destination_type = "topic"
+
+            # Send message with proper routing metadata
             return await self.send_message(
-                destination_name="exception_alerts",
-                message_body=alert_message,
+                destination_name=destination,
+                message_body=json.dumps(message_body),
                 correlation_id=loan_application_id,
-                destination_type="topic",
+                destination_type=destination_type,
                 message_type="exception_alert",
                 target_agent="exception_handler",
-                priority=priority  # Use the priority parameter
+                priority=priority
             )
             
         except Exception as e:
@@ -860,24 +939,8 @@ Timestamp: {datetime.utcnow().isoformat()}"""
         """
         return await self.send_audit_message(agent_name, action, loan_application_id, audit_data)
 
-    async def send_message_to_topic(self, topic_name: str, message_body: str, correlation_id: str = None) -> bool:
-        """
-        Send a message to a specific topic.
-        
-        Args:
-            topic_name (str): Name of the topic
-            message_body (str): Message content
-            correlation_id (str, optional): Correlation ID for message tracking
-            
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        return await self.send_message(
-            destination_name=topic_name,
-            message_body=message_body,
-            correlation_id=correlation_id,
-            destination_type="topic"
-        )
+    # OLD send_message_to_topic() deleted - duplicate of line 854 definition
+    # The line 854 version has message_type, target_agent, priority parameters
 
     async def send_audit_message(self, agent_name: str, action: str, loan_application_id: str = None, audit_data: dict = None) -> bool:
         """
@@ -894,8 +957,9 @@ Timestamp: {datetime.utcnow().isoformat()}"""
         """
         # Create audit message directly to avoid recursion
         try:
-            # Create audit message
+            # Create audit message with message_type included in body
             audit_message = {
+                "message_type": "audit_event",  # Add message_type to body
                 "agent_name": agent_name,
                 "action": action,
                 "loan_application_id": loan_application_id or "unknown",
@@ -908,11 +972,62 @@ Timestamp: {datetime.utcnow().isoformat()}"""
                 destination_name="audit_events",
                 message_body=json.dumps(audit_message),
                 correlation_id=loan_application_id or "unknown",
-                destination_type="topic"
+                destination_type="topic",
+                message_type="audit_event",  # Add to application properties for SQL filtering
+                target_agent="audit_logging"
             )
             
         except Exception as e:
             console_error(f"Failed to send audit message: {e}", "ServiceBusOps")
+            return False
+
+    async def send_workflow_message(
+        self, 
+        message_type: str, 
+        loan_application_id: str, 
+        message_data: Dict[str, Any],
+        correlation_id: Optional[str] = None
+    ) -> bool:
+        """
+        Send a workflow event message to the agent-workflow-events topic.
+        
+        This method sends workflow coordination messages that trigger agent actions
+        in the multi-agent rate lock system.
+        
+        Args:
+            message_type (str): Type of workflow event (e.g., context_retrieval_needed, 
+                              context_retrieved, rates_presented, compliance_passed)
+            loan_application_id (str): Loan application ID for tracking
+            message_data (Dict[str, Any]): Message payload containing workflow data
+            correlation_id (str, optional): Correlation ID for tracking (defaults to loan_application_id)
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Use loan_application_id as correlation_id if not provided
+            if not correlation_id:
+                correlation_id = loan_application_id
+            
+            # Create workflow message with message_type in the body
+            workflow_message = {
+                "message_type": message_type,
+                "loan_application_id": loan_application_id,
+                **message_data  # Merge in the message data
+            }
+            
+            # Send to agent-workflow-events topic
+            return await self.send_message(
+                destination_name="agent-workflow-events",
+                message_body=json.dumps(workflow_message),
+                correlation_id=correlation_id,
+                destination_type="topic",
+                message_type=message_type,  # Add to application properties for SQL filtering
+                target_agent=None  # Workflow messages route to multiple agents via subscriptions
+            )
+            
+        except Exception as e:
+            console_error(f"Failed to send workflow message: {e}", "ServiceBusOps")
             return False
 
     # Note: No close() method needed since we use per-operation clients

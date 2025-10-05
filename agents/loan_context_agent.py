@@ -1,218 +1,120 @@
 """
-Loan Application Context Agent
-Retrieves and verifies loan application data from the Loan Origination System (LOS).
+Loan Application Context Agent - Autonomous AI Agent
+Uses LLM to intelligently retrieve and validate loan context from LOS.
 """
 
-import asyncio
-from typing import Optional, Dict, Any
-from datetime import datetime
 import logging
+from typing import Dict, Any
+
+# Import base agent
+from agents.base_agent import BaseAgent
+
+# Import additional plugins specific to this agent
+from plugins.los_plugin import LoanOriginationSystemPlugin
 
 logger = logging.getLogger(__name__)
 
-class LoanApplicationContextAgent:
+
+class LoanApplicationContextAgent(BaseAgent):
     """
-    Role: Retrieves and verifies loan application data.
+    Autonomous AI Agent - Loan Context Retrieval
     
-    Tasks:
-    - Pull borrower's loan file from LOS (Loan Origination System)
-    - Check loan status (e.g., pre-approved, underwritten)
-    - Confirm eligibility for rate lock
+    Role: Uses LLM intelligence to retrieve loan data from LOS and validate eligibility.
+    
+    LLM Tasks:
+    - Receive 'email_parsed' workflow events
+    - Fetch loan application data from LOS (via plugin)
+    - Fetch rate lock record from Cosmos DB (via plugin)
+    - Validate loan eligibility for rate lock
+    - Enrich rate lock record with loan context
+    - Update status to CONTEXT_RETRIEVED (via plugin)
+    - Send workflow event to trigger Rate Quote Agent (via plugin)
+    - Log audit trail (via plugin)
+    
+    Agent is THIN - ALL work delegated to plugins via LLM autonomous function calling.
     """
     
-    def __init__(self, los_service=None):
-        self.los_service = los_service
-        self.agent_name = "LoanApplicationContextAgent"
+    def __init__(self):
+        """Initialize loan context agent with LOS plugin."""
+        super().__init__(agent_name="loan_context_agent")
+        self.los_plugin = None
     
-    async def retrieve_loan_context(self, loan_application_id: str) -> Dict[str, Any]:
-        """Retrieve complete loan application context from LOS."""
-        logger.info(f"{self.agent_name}: Retrieving context for loan {loan_application_id}")
+    async def _initialize_kernel(self):
+        """Initialize kernel and add LOS plugin."""
+        await super()._initialize_kernel()
         
-        try:
-            # Fetch loan application data
-            loan_data = await self._fetch_loan_application(loan_application_id)
-            
-            if not loan_data:
-                raise ValueError(f"Loan application {loan_application_id} not found")
-            
-            # Verify loan status
-            loan_status = await self._check_loan_status(loan_application_id)
-            
-            # Check rate lock eligibility
-            eligibility = await self._check_rate_lock_eligibility(loan_data, loan_status)
-            
-            # Build comprehensive context
-            context = {
-                "loan_application_id": loan_application_id,
-                "borrower_info": loan_data.get('borrower'),
-                "property_info": loan_data.get('property'),
-                "loan_details": {
-                    "loan_amount": loan_data.get('loan_amount'),
-                    "loan_type": loan_data.get('loan_type'),
-                    "loan_purpose": loan_data.get('loan_purpose'),
-                    "rate_type": loan_data.get('rate_type', 'Fixed'),
-                    "loan_term": loan_data.get('loan_term', 30)
-                },
-                "status_info": {
-                    "current_status": loan_status,
-                    "rate_lock_eligible": eligibility['eligible'],
-                    "eligibility_reasons": eligibility['reasons']
-                },
-                "estimated_closing_date": loan_data.get('estimated_closing_date'),
-                "loan_officer": loan_data.get('loan_officer'),
-                "audit": {
-                    "retrieved_by": self.agent_name,
-                    "retrieved_at": datetime.utcnow().isoformat()
-                }
-            }
-            
-            logger.info(f"{self.agent_name}: Successfully retrieved context for loan {loan_application_id}")
-            return context
-            
-        except Exception as e:
-            logger.error(f"{self.agent_name}: Error retrieving loan context - {str(e)}")
-            raise
+        if not self.los_plugin:
+            self.los_plugin = LoanOriginationSystemPlugin()
+            self.kernel.add_plugin(self.los_plugin, plugin_name="LOS")
+            logger.info(f"{self.agent_name}: LOS plugin registered")
     
-    async def _fetch_loan_application(self, loan_application_id: str) -> Optional[Dict[str, Any]]:
-        """Fetch loan application data from LOS."""
-        if not self.los_service:
-            logger.warning("LOS service not configured")
-            return None
-        
-        try:
-            # TODO: Implement actual LOS integration (Encompass, Blend, etc.)
-            loan_data = await self.los_service.get_loan_application(loan_application_id)
-            return loan_data
-            
-        except Exception as e:
-            logger.error(f"Error fetching loan application: {str(e)}")
-            return None
+    def _get_system_prompt(self) -> str:
+        """Define LLM instructions for autonomous loan context retrieval."""
+        return """You are the Loan Context Agent - an AI that retrieves loan application data.
+
+AVAILABLE TOOLS (call these autonomously as needed):
+1. LOS.get_loan_application(loan_application_id) - Fetch loan data from Loan Origination System
+2. CosmosDB.get_rate_lock(loan_application_id) - Fetch rate lock record
+3. CosmosDB.update_rate_lock_status(loan_application_id, new_status, updates) - Update record with loan context
+4. ServiceBus.send_workflow_event(message_type, loan_application_id, message_data, correlation_id) - Send to next agent
+5. ServiceBus.send_audit_log(agent_name, action, loan_application_id, event_type, audit_data) - Log action
+6. ServiceBus.send_exception(exception_type, priority, error_message, loan_application_id, agent_name) - Alert on errors
+
+YOUR WORKFLOW:
+1. Receive 'email_parsed' event for loan application
+2. Fetch loan application data from LOS using get_loan_application()
+3. Fetch the rate lock record from Cosmos DB
+4. Validate loan data:
+   - Loan exists and is active
+   - Borrower credit score available
+   - Property information complete
+   - Loan amount and LTV within acceptable ranges
+5. If validation PASSES:
+   - Enrich rate lock record with loan context (borrower, property, loan details)
+   - Update status to 'CONTEXT_RETRIEVED'
+   - Send 'context_retrieved' workflow event to trigger rate quote generation
+   - Log 'CONTEXT_RETRIEVED' audit event
+6. If validation FAILS:
+   - Send exception alert with specific failure reason
+   - DO NOT update status or send workflow event
+   - Log failure in audit
+
+IMPORTANT RULES:
+- ALWAYS use autonomous function calling - invoke tools directly
+- LOS returns complete loan application data including:
+  * Borrower: name, email, phone, credit_score, employment
+  * Property: address, value, type, occupancy
+  * Loan: amount, loan_type, ltv, term, purpose
+- Store ALL loan context in the rate lock record's loan_context field
+- Ensure loan_context includes flat fields for pricing engine:
+  * borrower_credit_score
+  * loan_to_value (ltv)
+  * loan_amount
+  * property_value
+  * loan_type
+  * property_state
+- Set status to 'CONTEXT_RETRIEVED' only after successful enrichment
+- Send workflow event type 'context_retrieved' to trigger rate_quote_agent
+- Log action 'CONTEXT_RETRIEVED' for audit trail
+- Use correlation_id from incoming message for workflow tracking
+- If LOS lookup fails, send HIGH priority exception
+
+RESPONSE FORMAT:
+Return a JSON summary with:
+{
+  "success": true,
+  "loan_application_id": "APP-12345",
+  "borrower_name": "John Doe",
+  "loan_amount": 450000,
+  "credit_score": 750,
+  "status": "CONTEXT_RETRIEVED",
+  "next_stage": "rate_quote"
+}
+
+You are autonomous - decide which tools to call and in what order!"""
     
-    async def _check_loan_status(self, loan_application_id: str) -> str:
-        """Check current loan processing status."""
-        if not self.los_service:
-            return "Unknown"
-        
-        try:
-            status = await self.los_service.get_loan_status(loan_application_id)
-            return status
-            
-        except Exception as e:
-            logger.error(f"Error checking loan status: {str(e)}")
-            return "Unknown"
-    
-    async def _check_rate_lock_eligibility(self, loan_data: Dict[str, Any], loan_status: str) -> Dict[str, Any]:
-        """Determine if the loan is eligible for rate lock."""
-        eligible = True
-        reasons = []
-        
-        # Check loan status requirements
-        valid_statuses = ["pre-approved", "underwritten", "conditionally_approved", "clear_to_close"]
-        if loan_status.lower() not in valid_statuses:
-            eligible = False
-            reasons.append(f"Loan status '{loan_status}' not eligible for rate lock")
-        
-        # Check required documentation
-        if not loan_data.get('income_verified'):
-            eligible = False
-            reasons.append("Income verification required")
-        
-        if not loan_data.get('assets_verified'):
-            eligible = False
-            reasons.append("Asset verification required")
-        
-        # Check property appraisal
-        if not loan_data.get('appraisal_completed'):
-            reasons.append("Appraisal pending - lock may be subject to value confirmation")
-        
-        # Check loan amount limits
-        loan_amount = loan_data.get('loan_amount', 0)
-        if loan_amount <= 0:
-            eligible = False
-            reasons.append("Invalid loan amount")
-        
-        # Check closing timeline
-        closing_date = loan_data.get('estimated_closing_date')
-        if not closing_date:
-            reasons.append("Estimated closing date required for appropriate lock term")
-        
-        if eligible and not reasons:
-            reasons.append("All eligibility requirements met")
-        
-        return {
-            "eligible": eligible,
-            "reasons": reasons
-        }
-    
-    async def validate_borrower_identity(self, borrower_email: str, loan_application_id: str) -> bool:
-        """Validate that the borrower email matches the loan application."""
-        try:
-            loan_data = await self._fetch_loan_application(loan_application_id)
-            
-            if not loan_data:
-                return False
-            
-            borrower_info = loan_data.get('borrower', {})
-            
-            # Check primary borrower email
-            if borrower_info.get('email', '').lower() == borrower_email.lower():
-                return True
-            
-            # Check co-borrower email if exists
-            co_borrower = loan_data.get('co_borrower', {})
-            if co_borrower.get('email', '').lower() == borrower_email.lower():
-                return True
-            
-            logger.warning(f"Borrower email {borrower_email} does not match loan {loan_application_id}")
-            return False
-            
-        except Exception as e:
-            logger.error(f"Error validating borrower identity: {str(e)}")
-            return False
-    
-    async def get_loan_officer_info(self, loan_application_id: str) -> Optional[Dict[str, Any]]:
-        """Get loan officer information for the application."""
-        try:
-            loan_data = await self._fetch_loan_application(loan_application_id)
-            
-            if not loan_data:
-                return None
-            
-            loan_officer = loan_data.get('loan_officer', {})
-            
-            return {
-                "name": loan_officer.get('name'),
-                "email": loan_officer.get('email'),
-                "phone": loan_officer.get('phone'),
-                "nmls_id": loan_officer.get('nmls_id')
-            }
-            
-        except Exception as e:
-            logger.error(f"Error getting loan officer info: {str(e)}")
-            return None
-    
-    async def update_loan_lock_request_status(self, loan_application_id: str, status: str) -> bool:
-        """Update the rate lock request status in the LOS."""
-        try:
-            if not self.los_service:
-                logger.warning("LOS service not configured")
-                return False
-            
-            success = await self.los_service.update_rate_lock_status(
-                loan_application_id,
-                status
-            )
-            
-            if success:
-                logger.info(f"{self.agent_name}: Updated rate lock status to {status} for loan {loan_application_id}")
-            
-            return success
-            
-        except Exception as e:
-            logger.error(f"Error updating loan lock status: {str(e)}")
-            return False
-    
-    async def close(self):
-        """Clean up agent resources."""
-        # Note: los_service cleanup would be handled by the service itself if needed
-        logger.info(f"{self.agent_name}: Resources cleaned up.")
+    async def cleanup(self):
+        """Clean up resources."""
+        if self.los_plugin:
+            await self.los_plugin.close()
+        await super().cleanup()

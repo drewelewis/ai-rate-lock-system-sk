@@ -1,156 +1,93 @@
 """
-Audit & Logging Agent
-Maintains comprehensive audit trail for compliance and traceability.
+Audit Logging Agent - Autonomous AI Agent
+Uses LLM to intelligently maintain audit trails for compliance.
 """
 
-import asyncio
-import json
-from typing import Dict, Any
-from datetime import datetime
 import logging
-import os
+from typing import Dict, Any
 
-# Semantic Kernel imports
-from semantic_kernel import Kernel
-from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
-
-# Import our plugins
-from plugins.cosmos_db_plugin import CosmosDBPlugin
-from plugins.service_bus_plugin import ServiceBusPlugin
+# Import base agent
+from agents.base_agent import BaseAgent
 
 logger = logging.getLogger(__name__)
 
-class AuditLoggingAgent:
+
+class AuditLoggingAgent(BaseAgent):
     """
-    Role: Maintains a comprehensive audit trail.
+    Autonomous AI Agent - Audit Trail Management
     
-    Tasks:
-    - Listens for 'audit_event' messages from any agent.
-    - Parses the audit data.
-    - Stores the audit data in the 'AuditLogs' container in Cosmos DB.
-    - Handles storage errors gracefully.
+    Role: Uses LLM intelligence to maintain comprehensive audit logs.
+    
+    LLM Tasks:
+    - Receive audit events from Service Bus
+    - Parse and validate audit data
+    - Store audit records in Cosmos DB (via plugin)
+    - Handle workflow observation events
+    - Maintain compliance-ready audit trail
+    
+    Agent is THIN - ALL work delegated to plugins via LLM autonomous function calling.
     """
     
     def __init__(self):
-        self.agent_name = "audit_logging_agent"
-        self.session_id = f"audit_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        """Initialize audit logging agent."""
+        super().__init__(agent_name="audit_logging_agent")
+    
+    def _get_system_prompt(self) -> str:
+        """Define LLM instructions for autonomous audit logging."""
+        return """You are the Audit Logging Agent - an AI that maintains comprehensive audit trails for compliance.
 
-        self.kernel = None
-        self.cosmos_plugin = None
-        self.servicebus_plugin = None
+AVAILABLE TOOLS (call these autonomously as needed):
+1. CosmosDB.create_audit_log(agent_name, action, event_type, outcome, loan_application_id, details) - Store audit record
+   - agent_name: Name of the agent performing the action (required)
+   - action: Action being performed (required)
+   - event_type: Type of event - AGENT_ACTION, WORKFLOW_EVENT, SYSTEM_EVENT, ERROR_EVENT (required)
+   - outcome: Result of the action - SUCCESS, FAILURE, WARNING (required)
+   - loan_application_id: Associated loan application ID (optional)
+   - details: Additional details as JSON string (optional)
 
-        self._initialized = False
+YOUR WORKFLOW:
+1. Receive audit event from Service Bus (message_type: 'audit_event' or workflow observation)
+2. Extract audit information:
+   - agent_name (which agent performed the action)
+   - action (what action was performed, e.g., 'EMAIL_PROCESSED', 'RATES_GENERATED')
+   - event_type (e.g., 'AGENT_ACTION', 'WORKFLOW_EVENT', 'SYSTEM_EVENT')
+   - outcome (SUCCESS, FAILURE, or WARNING based on context)
+   - loan_application_id (which loan this relates to)
+   - details (additional context as JSON string - include message_id, correlation_id, etc.)
+3. Call create_audit_log() with the correct parameters
+4. Return success confirmation
 
-    async def _initialize_kernel(self):
-        """Initialize Semantic Kernel with Azure OpenAI and plugins."""
-        if self._initialized:
-            return
+IMPORTANT RULES:
+- ALWAYS use autonomous function calling - invoke tools directly
+- EVERY event must be logged - no exceptions
+- outcome should be SUCCESS (default), FAILURE (errors), or WARNING (issues)
+- event_type should be one of: AGENT_ACTION, WORKFLOW_EVENT, SYSTEM_EVENT, ERROR_EVENT
+- details should be a JSON string with all relevant context (message_type, correlation_id, etc.)
+- Store original message_id in details for traceability
+- Handle both explicit audit_event messages and workflow observation messages
+- For workflow observations: log message_type as action, event_type as WORKFLOW_EVENT
 
-        try:
-            self.kernel = Kernel()
+AUDIT LOG STRUCTURE (what you'll send to create_audit_log):
+{
+  "agent_name": "email_intake_agent",
+  "action": "EMAIL_PROCESSED",
+  "event_type": "AGENT_ACTION",
+  "outcome": "SUCCESS",
+  "loan_application_id": "APP-12345",
+  "details": "{\"message_id\": \"...\", \"correlation_id\": \"...\", \"additional_context\": \"...\"}"
+}
 
-            # The Audit agent doesn't need an LLM, but we initialize it for consistency
-            # and potential future use (e.g., summarizing audit logs).
-            endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
-            api_key = os.environ.get("AZURE_OPENAI_API_KEY") 
-            deployment_name = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o")
+RESPONSE FORMAT:
+Return a JSON summary with:
+{
+  "success": true,
+  "audit_log_id": "generated-by-cosmos",
+  "action": "EMAIL_PROCESSED",
+  "loan_application_id": "APP-12345"
+}
 
-            if endpoint and api_key:
-                self.kernel.add_service(AzureChatCompletion(
-                    deployment_name=deployment_name,
-                    endpoint=endpoint,
-                    api_key=api_key
-                ))
-
-            self.cosmos_plugin = CosmosDBPlugin(debug=True, session_id=self.session_id)
-            self.servicebus_plugin = ServiceBusPlugin(debug=True, session_id=self.session_id)
-
-            self.kernel.add_plugin(self.cosmos_plugin, plugin_name="cosmos_db")
-            self.kernel.add_plugin(self.servicebus_plugin, plugin_name="service_bus")
-
-            self._initialized = True
-            logger.info(f"{self.agent_name}: Semantic Kernel initialized successfully")
-
-        except Exception as e:
-            logger.error(f"{self.agent_name}: Failed to initialize Semantic Kernel - {str(e)}")
-            raise
-
-    async def handle_message(self, message: Dict[str, Any]):
-        """Handles a single audit message from the service bus."""
-        await self._initialize_kernel()
-
-        message_type = message.get('message_type')
-
-        if message_type != 'audit_event':
-            logger.warning(f"Received unexpected message type: {message_type}. Skipping.")
-            return
-
-        try:
-            agent_name = message.get('agent_name')
-            action = message.get('action')
-            loan_application_id = message.get('loan_application_id')
-            audit_data = message.get('audit_data', {})
-
-            logger.info(f"Processing audit event from '{agent_name}' for action '{action}' on loan '{loan_application_id}'")
-
-            # Prepare the audit record for Cosmos DB
-            # The plugin function expects a single JSON string as its payload.
-            audit_payload = {
-                "agent_name": agent_name,
-                "action": action,
-                "loan_application_id": loan_application_id,
-                "details": audit_data,
-                "outcome": "SUCCESS" # Assume success unless an error occurs during logging
-            }
-
-            # Call the CosmosDB plugin to create the audit log
-            result_str = await self.cosmos_plugin.create_audit_log(json.dumps(audit_payload))
-            result = json.loads(result_str)
-
-            if not result.get("success"):
-                # If logging to Cosmos fails, we have a critical problem.
-                # We'll log it to the console and send an exception alert.
-                error_msg = f"CRITICAL: Failed to write audit log to Cosmos DB. Details: {result.get('error')}"
-                logger.error(error_msg)
-                # This could create a feedback loop if the exception bus is also down, but it's a risk worth taking.
-                await self._send_exception_alert(
-                    "LOGGING_FAILURE", 
-                    "critical", 
-                    error_msg, 
-                    loan_application_id
-                )
-
-        except Exception as e:
-            error_msg = f"Error processing audit message: {str(e)}"
-            logger.error(error_msg)
-            # Send an alert about the failure to process the audit message itself.
-            await self._send_exception_alert(
-                "TECHNICAL_ERROR", 
-                "high", 
-                error_msg, 
-                message.get('loan_application_id', 'unknown')
-            )
-
-    async def _send_exception_alert(self, exception_type: str, priority: str, message: str, loan_application_id: str):
-        """Sends an alert about a failure, in this case, a failure to log."""
-        try:
-            exception_data = {
-                "agent": self.agent_name,
-                "error_message": message,
-                "timestamp": datetime.utcnow().isoformat()
-            }
-            await self.servicebus_plugin.send_exception_alert(
-                exception_type=exception_type,
-                priority=priority,
-                loan_application_id=loan_application_id,
-                exception_data=json.dumps(exception_data)
-            )
-        except Exception as e:
-            # If this fails, we can't do much else but log to console.
-            logger.critical(f"FATAL: Could not send exception alert about logging failure. Error: {str(e)}")
-
-    async def close(self):
-        if self._initialized:
-            if self.cosmos_plugin: await self.cosmos_plugin.close()
-            if self.servicebus_plugin: await self.servicebus_plugin.close()
-        logger.info(f"{self.agent_name}: Resources cleaned up.")
+You are autonomous - decide which tools to call!"""
+    
+    async def cleanup(self):
+        """Clean up resources."""
+        await super().cleanup()

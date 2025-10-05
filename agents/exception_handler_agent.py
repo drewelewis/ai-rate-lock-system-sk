@@ -1,209 +1,106 @@
 """
-Exception Handler Agent
-Escalates complex cases and issues to human loan officers for review.
+Exception Handler Agent - Autonomous AI Agent
+Uses LLM to intelligently analyze and escalate exceptions for human review.
 """
 
-import asyncio
-import json
-from typing import Dict, Any
-from datetime import datetime, timedelta
 import logging
-import os
+from typing import Dict, Any
 
-# Semantic Kernel imports
-from semantic_kernel import Kernel
-from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
-from semantic_kernel.functions import kernel_function
-
-# Import our plugins
-from plugins.cosmos_db_plugin import CosmosDBPlugin
-from plugins.service_bus_plugin import ServiceBusPlugin
+# Import base agent
+from agents.base_agent import BaseAgent
 
 logger = logging.getLogger(__name__)
 
-class ExceptionHandlerAgent:
+
+class ExceptionHandlerAgent(BaseAgent):
     """
-    Role: Manages and escalates exceptions for human review.
+    Autonomous AI Agent - Exception Management & Escalation
     
-    Tasks:
-    - Listens for 'exception_alert' messages.
-    - Uses an LLM to analyze, summarize, and categorize the exception.
-    - Creates a detailed exception record in the 'Exceptions' container in Cosmos DB.
-    - (Future) Assigns exceptions to the appropriate team/person based on rules.
-    - (Future) Sends notifications about new high-priority exceptions.
+    Role: Uses LLM intelligence to analyze exceptions and escalate to human review.
+    
+    LLM Tasks:
+    - Receive exception alerts from Service Bus
+    - Analyze and categorize exceptions using AI
+    - Determine severity and priority
+    - Create detailed exception records (via plugin)
+    - Route to appropriate teams for resolution
+    - Send notifications for high-priority issues
+    
+    Agent is THIN - ALL work delegated to plugins via LLM autonomous function calling.
     """
     
     def __init__(self):
-        self.agent_name = "exception_handler_agent"
-        self.session_id = f"exception_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        """Initialize exception handler agent."""
+        super().__init__(agent_name="exception_handler_agent")
+    
+    def _get_system_prompt(self) -> str:
+        """Define LLM instructions for autonomous exception handling."""
+        return """You are the Exception Handler Agent - an AI that analyzes and escalates exceptions for human review.
 
-        self.kernel = None
-        self.cosmos_plugin = None
-        self.servicebus_plugin = None
+AVAILABLE TOOLS (call these autonomously as needed):
+1. CosmosDB.create_exception_record(loan_application_id, exception_type, severity, error_message, error_details, agent_name, category, assigned_to, status) - Create exception record
+2. ServiceBus.send_audit_log(agent_name, action, loan_application_id, event_type, audit_data) - Log exception handling
+3. ServiceBus.send_message_to_queue(queue_name, message_data) - Send notification for high-priority exceptions
 
-        self._initialized = False
+YOUR WORKFLOW:
+1. Receive exception alert from Service Bus
+2. Extract exception details:
+   - loan_application_id (which loan)
+   - error_type (what kind of error)
+   - error_message (brief description)
+   - error_details (full context)
+   - agent_name (which agent raised the exception)
+3. Use your AI intelligence to:
+   - Categorize exception into: VALIDATION_ERROR, COMPLIANCE_FAILURE, SYSTEM_ERROR, DATA_MISSING, INTEGRATION_FAILURE
+   - Determine severity: CRITICAL, HIGH, MEDIUM, LOW
+   - Assign to appropriate team: LOAN_OPERATIONS, COMPLIANCE_TEAM, IT_SUPPORT, UNDERWRITING
+   - Generate clear summary for human review
+4. Create exception record in Cosmos DB using create_exception_record()
+5. If severity is CRITICAL or HIGH:
+   - Send notification to 'high-priority-exceptions' queue
+   - Include: loan_id, exception summary, severity, assigned team, action required
+6. Log 'EXCEPTION_CREATED' audit event
+7. Return success confirmation
 
-    async def _initialize_kernel(self):
-        """Initialize Semantic Kernel with Azure OpenAI and plugins."""
-        if self._initialized:
-            return
-            
-        try:
-            self.kernel = Kernel()
-            
-            endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
-            api_key = os.environ.get("AZURE_OPENAI_API_KEY") 
-            deployment_name = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o")
-            
-            if not all([endpoint, api_key, deployment_name]):
-                raise ValueError("Missing Azure OpenAI configuration for Exception Handler Agent.")
+IMPORTANT RULES:
+- ALWAYS use autonomous function calling - invoke tools directly
+- Use your AI intelligence to analyze the error context and categorize appropriately
+- CRITICAL severity: Blocks entire workflow, requires immediate attention
+- HIGH severity: Significant impact, requires same-day resolution
+- MEDIUM severity: Process can continue but needs review
+- LOW severity: Informational, can be batched for review
+- Exception status should always start as 'OPEN'
+- Include detailed error_details for human troubleshooting
+- Send notifications ONLY for CRITICAL and HIGH severity
+- Log every exception created for audit trail
 
-            self.kernel.add_service(AzureChatCompletion(
-                deployment_name=deployment_name,
-                endpoint=endpoint,
-                api_key=api_key
-            ))
-            
-            self.cosmos_plugin = CosmosDBPlugin(debug=True, session_id=self.session_id)
-            self.servicebus_plugin = ServiceBusPlugin(debug=True, session_id=self.session_id)
-            
-            self.kernel.add_plugin(self.cosmos_plugin, plugin_name="cosmos_db")
-            self.kernel.add_plugin(self.servicebus_plugin, plugin_name="service_bus")
-            self.kernel.add_plugin(self, plugin_name="exception_analyzer")
-            
-            self._initialized = True
-            logger.info(f"{self.agent_name}: Semantic Kernel initialized successfully")
-            
-        except Exception as e:
-            logger.error(f"{self.agent_name}: Failed to initialize Semantic Kernel - {str(e)}")
-            raise
+CATEGORIZATION GUIDELINES:
+- VALIDATION_ERROR: Missing/invalid data (credit score, loan amount, etc.)
+- COMPLIANCE_FAILURE: TRID violations, state regulation issues
+- SYSTEM_ERROR: API failures, timeout errors, connectivity issues
+- DATA_MISSING: Required fields not available from LOS or other systems
+- INTEGRATION_FAILURE: External system integration problems
 
-    async def handle_message(self, message: Dict[str, Any]):
-        """Handles a single exception message from the service bus."""
-        await self._initialize_kernel()
-        
-        message_type = message.get('message_type')
-        
-        if message_type != 'exception_alert':
-            logger.warning(f"Received unexpected message type: {message_type}. Skipping.")
-            return
+TEAM ASSIGNMENT GUIDELINES:
+- LOAN_OPERATIONS: Validation errors, data quality issues
+- COMPLIANCE_TEAM: Regulatory violations, compliance failures
+- IT_SUPPORT: System errors, integration failures
+- UNDERWRITING: Complex loan eligibility questions
 
-        try:
-            priority = message.get('priority', 'medium')
-            exception_type = message.get('exception_type', 'UNKNOWN')
-            loan_application_id = message.get('loan_application_id')
-            exception_data = message.get('exception_data', {})
-            
-            logger.info(f"Processing '{priority}' priority exception '{exception_type}' for loan '{loan_application_id}'")
+RESPONSE FORMAT:
+Return a JSON summary with:
+{
+  "success": true,
+  "exception_id": "generated-by-cosmos",
+  "loan_application_id": "APP-12345",
+  "category": "COMPLIANCE_FAILURE",
+  "severity": "HIGH",
+  "assigned_to": "COMPLIANCE_TEAM",
+  "notification_sent": true
+}
 
-            # Use the LLM to analyze the exception
-            analysis_result_str = await self.kernel.invoke(
-                self.kernel.plugins["exception_analyzer"]["analyze_exception"],
-                exception_type=exception_type,
-                error_message=exception_data.get("error_message", "No message provided."),
-                context=json.dumps(exception_data)
-            )
-            analysis_result = json.loads(str(analysis_result_str))
-
-            # Prepare the record for Cosmos DB
-            exception_payload = {
-                "loan_application_id": loan_application_id,
-                "exception_type": exception_type,
-                "agent_name": exception_data.get("agent", "Unknown"),
-                "description": analysis_result.get("summary", "Analysis failed."),
-                "context": exception_data,
-                "assignee": analysis_result.get("suggested_assignee", "unassigned"),
-                "estimated_resolution_time": analysis_result.get("estimated_resolution_time_hrs", 8)
-            }
-
-            # Call the CosmosDB plugin to create the exception record
-            result_str = await self.cosmos_plugin.create_exception(priority, json.dumps(exception_payload))
-            result = json.loads(result_str)
-
-            if not result.get("success"):
-                # This is a critical failure. If we can't log exceptions, the system is blind.
-                error_msg = f"CRITICAL: Failed to create exception record in Cosmos DB. Details: {result.get('error')}"
-                logger.error(error_msg)
-                # We won't send another exception alert to avoid a loop. Just log it.
-            else:
-                logger.info(f"Successfully created exception record {result.get('data', {}).get('exception_id')} for loan '{loan_application_id}'")
-
-        except Exception as e:
-            # This is the 'meta-exception'. An exception occurred within the exception handler itself.
-            error_msg = f"FATAL: Unhandled error in ExceptionHandlerAgent: {str(e)}"
-            logger.critical(error_msg)
-            # At this point, we can't trust our own exception bus. The best we can do is log to console.
-
-    @kernel_function(
-        description="Analyzes a technical or business exception and provides a summary, suggested assignee, and estimated resolution time.",
-        name="analyze_exception"
-    )
-    def analyze_exception(
-        self,
-        exception_type: str,
-        error_message: str,
-        context: str
-    ) -> str:
-        """
-        Uses an LLM to analyze an exception and return a structured JSON response.
-        
-        The prompt is designed to guide the LLM to provide a consistent, structured output
-        that can be used to create a ticket or alert for human intervention.
-        """
-        
-        prompt = f"""
-        Analyze the following exception from our automated rate lock system and provide a structured JSON response.
-
-        **Exception Details:**
-        - Type: {exception_type}
-        - Error Message: {error_message}
-        - Full Context: {context}
-
-        **Your Task:**
-        Based on the information, generate a JSON object with the following keys:
-        1. "summary": A concise, one-sentence summary of the problem for a human loan officer or IT support person.
-        2. "suggested_assignee": Who should handle this? Your options are "Loan Officer", "IT Support", "Compliance Team", or "unassigned". Base this on the exception type and message.
-        3. "estimated_resolution_time_hrs": An integer estimate of the hours needed to resolve this.
-
-        **Assignee Guidelines:**
-        - "COMPLIANCE_RISK": Assign to "Compliance Team".
-        - "PRICING_UNAVAILABLE", "TECHNICAL_ERROR", "LOGGING_FAILURE": Assign to "IT Support".
-        - "MISSING_DATA", "INVALID_LOAN_DATA": Assign to "Loan Officer".
-        - If unsure, use "unassigned".
-
-        **Example Response:**
-        {{
-            "summary": "The compliance check failed because the borrower's debt-to-income ratio exceeds the maximum allowed limit.",
-            "suggested_assignee": "Compliance Team",
-            "estimated_resolution_time_hrs": 2
-        }}
-
-        **JSON Response:**
-        """
-        # In a real scenario, you would invoke the LLM here.
-        # For this simulation, we are returning a pre-canned response based on the type.
-        
-        if "COMPLIANCE" in exception_type.upper():
-            assignee = "Compliance Team"
-            summary = f"A compliance rule failed during processing. Details: {error_message}"
-            hours = 4
-        elif any(err in exception_type.upper() for err in ["TECHNICAL", "PRICING", "LOGGING"]):
-            assignee = "IT Support"
-            summary = f"A technical error occurred in the '{json.loads(context).get('agent', 'unknown')}' agent. Details: {error_message}"
-            hours = 8
-        else:
-            assignee = "Loan Officer"
-            summary = f"There is an issue with the loan data provided. Details: {error_message}"
-            hours = 2
-
-        return json.dumps({
-            "summary": summary,
-            "suggested_assignee": assignee,
-            "estimated_resolution_time_hrs": hours
-        })
-
-    async def close(self):
-        if self._initialized:
-            if self.cosmos_plugin: await self.cosmos_plugin.close()
-            if self.servicebus_plugin: await self.servicebus_plugin.close()
-        logger.info(f"{self.agent_name}: Resources cleaned up.")
+You are autonomous - use your AI intelligence to analyze and categorize exceptions!"""
+    
+    async def cleanup(self):
+        """Clean up resources."""
+        await super().cleanup()

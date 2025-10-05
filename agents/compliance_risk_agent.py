@@ -1,193 +1,109 @@
 """
-Compliance & Risk Agent
-Ensures rate lock requests comply with internal and regulatory guidelines.
+Compliance & Risk Agent - Autonomous AI Agent
+Uses LLM to intelligently assess compliance and risk for rate lock requests.
 """
 
-import asyncio
-import json
-from typing import Dict, Any
-from datetime import datetime
 import logging
-import os
+from typing import Dict, Any
 
-# Semantic Kernel imports
-from semantic_kernel import Kernel
-from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
+# Import base agent
+from agents.base_agent import BaseAgent
 
-# Import our plugins
-from plugins.cosmos_db_plugin import CosmosDBPlugin
-from plugins.service_bus_plugin import ServiceBusPlugin
+# Import additional plugins specific to this agent
 from plugins.compliance_plugin import CompliancePlugin
 
 logger = logging.getLogger(__name__)
 
-class ComplianceRiskAgent:
+
+class ComplianceRiskAgent(BaseAgent):
     """
-    Role: Ensures the lock request complies with internal and regulatory guidelines.
+    Autonomous AI Agent - Compliance & Risk Assessment
     
-    Tasks:
-    - Listens for 'rates_presented' messages.
-    - Fetches the loan record with rate options from Cosmos DB.
-    - Runs a series of compliance checks (TRID, state laws, fee tolerance).
-    - Updates the rate lock record with the compliance results and sets status.
-    - Sends a 'compliance_checked' message to trigger the Lock Confirmation Agent.
+    Role: Uses LLM intelligence to ensure rate lock requests comply with regulations.
+    
+    LLM Tasks:
+    - Receive 'rate_quoted' workflow events
+    - Fetch loan record with rate options from Cosmos DB (via plugin)
+    - Run compliance checks (via plugin)
+    - Assess risk factors (via plugin)
+    - Update status to COMPLIANCE_CHECKED (via plugin)
+    - Send workflow event to trigger Lock Confirmation Agent (via plugin)
+    - Log audit trail (via plugin)
+    
+    Agent is THIN - ALL work delegated to plugins via LLM autonomous function calling.
     """
     
     def __init__(self):
-        self.agent_name = "compliance_risk_agent"
-        self.session_id = f"compliance_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-
-        self.kernel = None
-        self.cosmos_plugin = None
-        self.servicebus_plugin = None
+        """Initialize compliance risk agent with compliance plugin."""
+        super().__init__(agent_name="compliance_risk_agent")
         self.compliance_plugin = None
-
-        self._initialized = False
-        self._is_processing = False
-
+    
     async def _initialize_kernel(self):
-        """Initialize Semantic Kernel with Azure OpenAI and plugins."""
-        if self._initialized:
-            return
-            
-        try:
-            self.kernel = Kernel()
-            
-            endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
-            api_key = os.environ.get("AZURE_OPENAI_API_KEY") 
-            deployment_name = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o")
-            
-            if endpoint and api_key:
-                self.kernel.add_service(AzureChatCompletion(
-                    deployment_name=deployment_name,
-                    endpoint=endpoint,
-                    api_key=api_key
-                ))
-            
-            self.cosmos_plugin = CosmosDBPlugin(debug=True, session_id=self.session_id)
-            self.servicebus_plugin = ServiceBusPlugin(debug=True, session_id=self.session_id)
-            self.compliance_plugin = CompliancePlugin(debug=True, session_id=self.session_id)
-            
-            self.kernel.add_plugin(self.cosmos_plugin, plugin_name="cosmos_db")
-            self.kernel.add_plugin(self.servicebus_plugin, plugin_name="service_bus")
-            self.kernel.add_plugin(self.compliance_plugin, plugin_name="compliance")
-            
-            self._initialized = True
-            logger.info(f"{self.agent_name}: Semantic Kernel initialized successfully")
-            
-        except Exception as e:
-            logger.error(f"{self.agent_name}: Failed to initialize Semantic Kernel - {str(e)}")
-            raise
-
-    async def handle_message(self, message: Dict[str, Any]):
-        """Handles a single message from the service bus."""
-        await self._initialize_kernel()
+        """Initialize kernel and add compliance plugin."""
+        await super()._initialize_kernel()
         
-        message_type = message.get('message_type')
-        loan_application_id = message.get('loan_application_id')
-        
-        logger.info(f"{self.agent_name}: Received message '{message_type}' for loan '{loan_application_id}'")
+        if not self.compliance_plugin:
+            self.compliance_plugin = CompliancePlugin()
+            self.kernel.add_plugin(self.compliance_plugin, plugin_name="Compliance")
+            logger.info(f"{self.agent_name}: Compliance plugin registered")
+    
+    def _get_system_prompt(self) -> str:
+        """Define LLM instructions for autonomous compliance checking."""
+        return """You are the Compliance & Risk Agent - an AI that ensures rate locks meet regulatory requirements.
 
-        if message_type != 'rates_presented':
-            logger.warning(f"Received unexpected message type: {message_type}. Skipping.")
-            return
+AVAILABLE TOOLS (call these autonomously as needed):
+1. CosmosDB.get_rate_lock(loan_application_id) - Fetch loan record with rate options
+2. Compliance.check_trid_compliance(loan_data) - Verify TRID requirements
+3. Compliance.check_state_regulations(loan_data) - Check state-specific rules
+4. Compliance.calculate_risk_score(loan_data) - Assess risk factors
+5. CosmosDB.update_rate_lock_status(loan_application_id, new_status, updates) - Update record
+6. ServiceBus.send_workflow_event(message_type, loan_application_id, message_data, correlation_id) - Send to next agent
+7. ServiceBus.send_audit_log(agent_name, action, loan_application_id, event_type, audit_data) - Log action
+8. ServiceBus.send_exception(exception_type, priority, loan_application_id, error_message, agent_name) - Alert on compliance failure
 
-        try:
-            # 1. Fetch the full loan record from Cosmos DB
-            rate_lock_record_str = await self.cosmos_plugin.get_rate_lock(loan_application_id)
-            rate_lock_record = json.loads(rate_lock_record_str)
+YOUR WORKFLOW:
+1. Receive 'rate_quoted' event for loan
+2. Fetch the loan record from Cosmos DB (includes borrower data, property, rates)
+3. Run compliance checks:
+   - TRID compliance (timing, disclosures)
+   - State regulations (licensing, rate caps)
+   - Risk assessment (DTI, LTV, credit score)
+4. If ALL checks PASS:
+   - Update status to 'COMPLIANCE_CHECKED'
+   - Send 'compliance_passed' workflow event to trigger lock confirmation
+   - Log 'COMPLIANCE_PASSED' audit event
+5. If ANY check FAILS:
+   - Update status to 'COMPLIANCE_FAILED'
+   - Send exception alert with priority 'medium' and type 'COMPLIANCE_FAILURE'
+   - Log 'COMPLIANCE_FAILED' audit event
+   - DO NOT send workflow event (stop processing)
 
-            if not rate_lock_record.get("success"):
-                raise ValueError(f"Could not retrieve rate lock record for {loan_application_id}")
+IMPORTANT RULES:
+- ALWAYS use autonomous function calling - invoke tools directly
+- Run ALL compliance checks, don't stop at first failure
+- Include detailed compliance results in status update
+- Risk score above 80 should trigger manual review
+- Set status to 'COMPLIANCE_CHECKED' only if ALL checks pass
+- Send workflow event type 'compliance_passed' to trigger lock_confirmation_agent
+- Log action 'COMPLIANCE_CHECKED' for audit trail
+- Use correlation_id from incoming message for workflow tracking
 
-            loan_data = rate_lock_record.get("data", {})
+RESPONSE FORMAT:
+Return a JSON summary with:
+{
+  "success": true,
+  "loan_application_id": "APP-12345",
+  "compliance_status": "PASSED" | "FAILED",
+  "checks_performed": ["TRID", "STATE_REGS", "RISK_SCORE"],
+  "risk_score": 45,
+  "next_stage": "lock_confirmation" | "manual_review"
+}
 
-            # 2. Run compliance assessment
-            compliance_result_str = await self.compliance_plugin.run_compliance_assessment(json.dumps(loan_data))
-            compliance_result = json.loads(compliance_result_str)
+You are autonomous - decide which tools to call based on compliance results!"""
+    
+    async def cleanup(self):
+        """Clean up resources."""
+        if self.compliance_plugin:
+            await self.compliance_plugin.close()
+        await super().cleanup()
 
-            if not compliance_result.get("success"):
-                raise ValueError(f"Compliance assessment failed: {compliance_result.get('error')}")
-
-            compliance_data = compliance_result.get("data", {})
-            compliance_status = compliance_data.get("overall_status", "Failed")
-
-            # 3. Determine new status and update Cosmos DB
-            new_status = "Compliance" + compliance_status # e.g., "CompliancePassed" or "ComplianceFailed"
-            update_payload = {
-                "status": new_status,
-                "compliance_check_results": compliance_data,
-                "compliance_checked_at": datetime.utcnow().isoformat()
-            }
-            await self.cosmos_plugin.update_rate_lock(loan_application_id, json.dumps(update_payload))
-            
-            # 4. Send audit message
-            await self._send_audit_message("COMPLIANCE_CHECKED", loan_application_id, {
-                "status": new_status,
-                "compliance_status": compliance_status
-            })
-            
-            # 5. Send workflow message for the next agent
-            if compliance_status == "Passed":
-                await self._send_workflow_message("compliance_passed", loan_application_id, {
-                    "loan_application_id": loan_application_id,
-                    "next_action": "present_for_confirmation"
-                })
-                logger.info(f"Compliance check PASSED for loan '{loan_application_id}'.")
-            else:
-                # If compliance fails, we might send an alert or trigger a manual review
-                await self._send_exception_alert("COMPLIANCE_FAILURE", "medium", 
-                                                 f"Compliance check failed for loan {loan_application_id}", 
-                                                 loan_application_id)
-                logger.warning(f"Compliance check FAILED for loan '{loan_application_id}'.")
-
-
-        except Exception as e:
-            error_msg = f"Failed to process compliance check for loan '{loan_application_id}': {str(e)}"
-            logger.error(error_msg)
-            await self._send_exception_alert("TECHNICAL_ERROR", "high", error_msg, loan_application_id)
-
-    async def _send_audit_message(self, action: str, loan_application_id: str, audit_data: Dict[str, Any]):
-        try:
-            await self.servicebus_plugin.send_audit_message(
-                agent_name=self.agent_name,
-                action=action,
-                loan_application_id=loan_application_id,
-                audit_data=json.dumps(audit_data)
-            )
-        except Exception as e:
-            logger.error(f"Failed to send audit message: {str(e)}")
-
-    async def _send_workflow_message(self, message_type: str, loan_application_id: str, message_data: Dict[str, Any]):
-        try:
-            await self.servicebus_plugin.send_workflow_message(
-                message_type=message_type,
-                loan_application_id=loan_application_id,
-                message_data=json.dumps(message_data),
-                correlation_id=self.session_id
-            )
-        except Exception as e:
-            logger.error(f"Failed to send workflow message: {str(e)}")
-
-    async def _send_exception_alert(self, exception_type: str, priority: str, message: str, loan_application_id: str):
-        try:
-            exception_data = {
-                "agent": self.agent_name,
-                "error_message": message,
-                "timestamp": datetime.utcnow().isoformat()
-            }
-            await self.servicebus_plugin.send_exception_alert(
-                exception_type=exception_type,
-                priority=priority,
-                loan_application_id=loan_application_id,
-                exception_data=json.dumps(exception_data)
-            )
-        except Exception as e:
-            logger.error(f"Failed to send exception alert: {str(e)}")
-
-    async def close(self):
-        if self._initialized:
-            if self.cosmos_plugin: await self.cosmos_plugin.close()
-            if self.servicebus_plugin: await self.servicebus_plugin.close()
-            if self.compliance_plugin: await self.compliance_plugin.close()
-        logger.info(f"{self.agent_name}: Resources cleaned up.")
