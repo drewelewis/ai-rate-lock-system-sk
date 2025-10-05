@@ -121,11 +121,20 @@ graph TB
     LockConfirm -.->|Read/Write State| CosmosDB
     Audit -.->|Write Logs| CosmosDB
     
-    style Email fill:#e1f5ff
-    style Notification fill:#e1f5ff
-    style Topic fill:#fff4e6
-    style OpenAI fill:#f3e5f5
-    style CosmosDB fill:#e8f5e9
+    style Email fill:#4FC3F7,stroke:#0277BD,stroke-width:3px,color:#000
+    style InboundQueue fill:#FFB74D,stroke:#E65100,stroke-width:3px,color:#000
+    style EmailIntake fill:#81C784,stroke:#2E7D32,stroke-width:3px,color:#000
+    style LoanContext fill:#81C784,stroke:#2E7D32,stroke-width:3px,color:#000
+    style RateQuote fill:#81C784,stroke:#2E7D32,stroke-width:3px,color:#000
+    style Compliance fill:#81C784,stroke:#2E7D32,stroke-width:3px,color:#000
+    style LockConfirm fill:#81C784,stroke:#2E7D32,stroke-width:3px,color:#000
+    style Audit fill:#FFD54F,stroke:#F57F17,stroke-width:3px,color:#000
+    style Exception fill:#FF8A65,stroke:#D84315,stroke-width:3px,color:#000
+    style Topic fill:#FFB74D,stroke:#E65100,stroke-width:3px,color:#000
+    style OutboundQueue fill:#FFB74D,stroke:#E65100,stroke-width:3px,color:#000
+    style Notification fill:#4FC3F7,stroke:#0277BD,stroke-width:3px,color:#000
+    style OpenAI fill:#BA68C8,stroke:#6A1B9A,stroke-width:3px,color:#000
+    style CosmosDB fill:#4DB6AC,stroke:#00695C,stroke-width:3px,color:#000
 ```
 
 ---
@@ -458,13 +467,20 @@ flowchart LR
     Results --> Process
     Process --> Publish
     
-    style Input fill:#e1f5ff
-    style Agent fill:#f0f0f0
-    style LLM fill:#f3e5f5
-    style SK fill:#fff4e6
-    style Plugins fill:#e8f5e9
-    style Return fill:#fff3e0
-    style Examples fill:#fafafa
+    style SB fill:#FFB74D,stroke:#E65100,stroke-width:3px,color:#000
+    style Receive fill:#90CAF9,stroke:#1565C0,stroke-width:3px,color:#000
+    style Prompt fill:#90CAF9,stroke:#1565C0,stroke-width:3px,color:#000
+    style Analyze fill:#CE93D8,stroke:#6A1B9A,stroke-width:3px,color:#000
+    style Decide fill:#CE93D8,stroke:#6A1B9A,stroke-width:3px,color:#000
+    style Invoke fill:#FFD54F,stroke:#F57F17,stroke-width:3px,color:#000
+    style Business fill:#81C784,stroke:#2E7D32,stroke-width:3px,color:#000
+    style P1 fill:#A5D6A7,stroke:#388E3C,stroke-width:2px,color:#000
+    style P2 fill:#A5D6A7,stroke:#388E3C,stroke-width:2px,color:#000
+    style P3 fill:#A5D6A7,stroke:#388E3C,stroke-width:2px,color:#000
+    style P4 fill:#A5D6A7,stroke:#388E3C,stroke-width:2px,color:#000
+    style Results fill:#FFCC80,stroke:#E65100,stroke-width:3px,color:#000
+    style Process fill:#FFCC80,stroke:#E65100,stroke-width:3px,color:#000
+    style Publish fill:#FFCC80,stroke:#E65100,stroke-width:3px,color:#000
 ```
 
 **Key Principle**: Agents define WHAT to do (via system prompts), and GPT-4o autonomously decides HOW (by calling plugin functions). No hardcoded logic!
@@ -491,6 +507,20 @@ stateDiagram-v2
     Locked --> [*]
     Expired --> [*]
     Cancelled --> [*]
+    
+    classDef pendingStyle fill:#FFB74D,stroke:#E65100,stroke-width:3px,color:#000
+    classDef reviewStyle fill:#90CAF9,stroke:#1565C0,stroke-width:3px,color:#000
+    classDef presentedStyle fill:#FFD54F,stroke:#F57F17,stroke-width:3px,color:#000
+    classDef lockedStyle fill:#81C784,stroke:#2E7D32,stroke-width:3px,color:#000
+    classDef expiredStyle fill:#E0E0E0,stroke:#616161,stroke-width:3px,color:#000
+    classDef cancelledStyle fill:#FF8A65,stroke:#D84315,stroke-width:3px,color:#000
+    
+    class PendingRequest pendingStyle
+    class UnderReview reviewStyle
+    class RateOptionsPresented presentedStyle
+    class Locked lockedStyle
+    class Expired expiredStyle
+    class Cancelled cancelledStyle
 ```
 
 ### State Descriptions
@@ -836,15 +866,30 @@ flowchart TB
     Orchestrator --> OutboundQ
     OutboundQ --> EmailOut
     
-    style LogicApps fill:#e1f5ff
-    style ServiceBusQueues fill:#fff4e6
-    style Orchestrator fill:#f0f0f0
-    style ServiceBusTopic fill:#fff4e6
-    style AI fill:#f3e5f5
-    style Storage fill:#e8f5e9
-    style ListenerDetails fill:#fafafa
-    style TopicDetails fill:#fafafa
-    style AIDetails fill:#fafafa
+    style EmailIn fill:#4FC3F7,stroke:#0277BD,stroke-width:3px,color:#000
+    style EmailOut fill:#4FC3F7,stroke:#0277BD,stroke-width:3px,color:#000
+    style InboundQ fill:#FFB74D,stroke:#E65100,stroke-width:3px,color:#000
+    style OutboundQ fill:#FFB74D,stroke:#E65100,stroke-width:3px,color:#000
+    style Listeners fill:#90CAF9,stroke:#1565C0,stroke-width:3px,color:#000
+    style L1 fill:#A5D6A7,stroke:#388E3C,stroke-width:2px,color:#000
+    style L2 fill:#A5D6A7,stroke:#388E3C,stroke-width:2px,color:#000
+    style L3 fill:#A5D6A7,stroke:#388E3C,stroke-width:2px,color:#000
+    style L4 fill:#A5D6A7,stroke:#388E3C,stroke-width:2px,color:#000
+    style L5 fill:#A5D6A7,stroke:#388E3C,stroke-width:2px,color:#000
+    style L6 fill:#A5D6A7,stroke:#388E3C,stroke-width:2px,color:#000
+    style L7 fill:#FFD54F,stroke:#F57F17,stroke-width:2px,color:#000
+    style L8 fill:#FF8A65,stroke:#D84315,stroke-width:2px,color:#000
+    style Topic fill:#FFB74D,stroke:#E65100,stroke-width:3px,color:#000
+    style Meta fill:#FFF9C4,stroke:#F9A825,stroke-width:2px,color:#000
+    style Subs fill:#FFF9C4,stroke:#F9A825,stroke-width:2px,color:#000
+    style LLM fill:#CE93D8,stroke:#6A1B9A,stroke-width:3px,color:#000
+    style A1 fill:#E1BEE7,stroke:#7B1FA2,stroke-width:2px,color:#000
+    style A2 fill:#E1BEE7,stroke:#7B1FA2,stroke-width:2px,color:#000
+    style A3 fill:#E1BEE7,stroke:#7B1FA2,stroke-width:2px,color:#000
+    style A4 fill:#E1BEE7,stroke:#7B1FA2,stroke-width:2px,color:#000
+    style DB1 fill:#4DB6AC,stroke:#00695C,stroke-width:3px,color:#000
+    style DB2 fill:#4DB6AC,stroke:#00695C,stroke-width:3px,color:#000
+    style DB3 fill:#4DB6AC,stroke:#00695C,stroke-width:3px,color:#000
 ```
 
 ---
@@ -852,6 +897,7 @@ flowchart TB
 ### Agent Communication Flow
 
 ```mermaid
+%%{init: {'theme':'base', 'themeVariables': { 'primaryColor':'#81C784','primaryTextColor':'#000','primaryBorderColor':'#2E7D32','lineColor':'#1565C0','secondaryColor':'#FFB74D','tertiaryColor':'#CE93D8','noteBkgColor':'#FFF9C4','noteBorderColor':'#F9A825','actorBkg':'#4FC3F7','actorBorder':'#0277BD','actorTextColor':'#000','signalColor':'#1565C0','signalTextColor':'#000','labelBoxBkgColor':'#FFD54F','labelBoxBorderColor':'#F57F17'}}}%%
 sequenceDiagram
     participant Email as 📧 Inbound Email
     participant InQ as 🔷 inbound-email-queue
@@ -870,6 +916,7 @@ sequenceDiagram
     
     Note over Email,Notify: Primary Workflow (Sequential Processing)
     
+    rect rgb(200, 230, 255)
     Email->>InQ: New rate lock request
     InQ->>Intake: Message received
     Intake->>AI: Parse email (LLM)
@@ -877,49 +924,62 @@ sequenceDiagram
     Intake->>DB: Create RateLockRecord
     Intake->>Topic: Publish (MessageType='email_parsed')
     Topic->>Audit: ALL messages
+    end
     
+    rect rgb(200, 255, 230)
     Topic->>Context: Filter: email_parsed
     Context->>AI: Validate eligibility (LLM)
     AI-->>Context: Eligibility decision
     Context->>DB: Update state → UnderReview
     Context->>Topic: Publish (MessageType='context_retrieved')
     Topic->>Audit: ALL messages
+    end
     
+    rect rgb(255, 245, 200)
     Topic->>Quote: Filter: context_retrieved
     Quote->>AI: Generate rate options (LLM)
     AI-->>Quote: Rate quotes
     Quote->>DB: Update state → RateOptionsPresented
     Quote->>Topic: Publish (MessageType='rate_quoted')
     Topic->>Audit: ALL messages
+    end
     
+    rect rgb(230, 200, 255)
     Topic->>Comp: Filter: rate_quoted
     Comp->>AI: Assess compliance (LLM)
     AI-->>Comp: Risk assessment
     Comp->>DB: Update compliance status
     Comp->>Topic: Publish (MessageType='compliance_passed')
     Topic->>Audit: ALL messages
+    end
     
+    rect rgb(200, 255, 255)
     Topic->>Lock: Filter: compliance_passed
     Lock->>AI: Execute lock (LLM)
     AI-->>Lock: Lock confirmation
     Lock->>DB: Update state → Locked
     Lock->>OutQ: Send confirmation email
     OutQ->>Notify: Email sent
+    end
     
     Note over Exception,Topic: Exception Flow (Error Handling)
     
     alt Exception Occurs
+        rect rgb(255, 220, 200)
         Intake--xException: Priority='high'
         Exception->>AI: Analyze exception (LLM)
         AI-->>Exception: Escalation decision
         Exception->>DB: Log exception
         Exception->>OutQ: Alert notification
+        end
     end
     
     Note over Audit,Topic: Audit Flow (Parallel Logging)
     
+    rect rgb(255, 255, 200)
     Audit->>DB: Log all agent actions
     Audit->>DB: Maintain audit trail
+    end
 ```
 
 #### Message Flow Details
