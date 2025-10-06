@@ -225,7 +225,7 @@ resource roleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = i
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '5bd9cd88-fe45-4216-938b-f97437e15450') // DocumentDB Account Contributor
     principalId: principalId
-    principalType: 'User'
+    // Don't specify principalType - let Azure auto-detect
   }
 }
 
@@ -236,6 +236,7 @@ resource dataContributorRoleAssignment 'Microsoft.DocumentDB/databaseAccounts/sq
   properties: {
     roleDefinitionId: '${cosmosDbAccount.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002'
     principalId: principalId
+    scope: cosmosDbAccount.id
   }
 }
 

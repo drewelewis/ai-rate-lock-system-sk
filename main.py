@@ -402,6 +402,9 @@ class AIRateLockSystem:
             except Exception as e:
                 logger.error(f"❌ Error cleaning up {agent_name}: {str(e)}")
         
+        # Give async tasks time to cleanup
+        await asyncio.sleep(0.5)
+        
         # Clean up any remaining Service Bus credentials to prevent session warnings
         if self.service_bus:
             try:

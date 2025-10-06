@@ -16,7 +16,7 @@ resource serviceBusDataSenderRoleAssignment 'Microsoft.Authorization/roleAssignm
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '69a216fc-b8fb-44d8-bc22-1f3c2cd27a39') // Azure Service Bus Data Sender
     principalId: principalId
-    principalType: 'ServicePrincipal'
+    // Don't specify principalType - let Azure auto-detect
   }
 }]
 
@@ -27,6 +27,6 @@ resource serviceBusDataReceiverRoleAssignment 'Microsoft.Authorization/roleAssig
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4f6d3b9b-027b-4f4c-9142-0e5a2a2247e0') // Azure Service Bus Data Receiver
     principalId: principalId
-    principalType: 'ServicePrincipal'
+    // Don't specify principalType - let Azure auto-detect
   }
 }]

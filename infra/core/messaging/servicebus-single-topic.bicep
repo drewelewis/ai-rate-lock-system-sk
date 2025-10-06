@@ -68,7 +68,7 @@ resource inboundEmailQueue 'Microsoft.ServiceBus/namespaces/queues@2021-11-01' =
     duplicateDetectionHistoryTimeWindow: 'PT10M' // 10 minutes
     requiresDuplicateDetection: false
     enablePartitioning: false
-    lockDuration: 'PT1M'
+    lockDuration: 'PT5M' // Maximum allowed by Azure (5 minutes)
     maxDeliveryCount: 10
     deadLetteringOnMessageExpiration: false
     enableBatchedOperations: true
@@ -85,7 +85,7 @@ resource outboundEmailQueue 'Microsoft.ServiceBus/namespaces/queues@2021-11-01' 
     duplicateDetectionHistoryTimeWindow: 'PT10M'
     requiresDuplicateDetection: false
     enablePartitioning: false
-    lockDuration: 'PT1M'
+    lockDuration: 'PT5M' // Maximum allowed by Azure (5 minutes)
     maxDeliveryCount: 10
     deadLetteringOnMessageExpiration: false
     enableBatchedOperations: true
@@ -99,10 +99,11 @@ resource exceptionQueue 'Microsoft.ServiceBus/namespaces/queues@2021-11-01' = {
     maxMessageSizeInKilobytes: 256
     defaultMessageTimeToLive: 'P7D' // 7 days for compliance
     maxSizeInMegabytes: 1024
-    duplicateDetectionHistoryTimeWindow: 'PT10M'
-    requiresDuplicateDetection: true
+    // Note: requiresDuplicateDetection cannot be changed on existing queues
+    // If queue exists, this must match existing value (likely false)
+    requiresDuplicateDetection: false
     enablePartitioning: false
-    lockDuration: 'PT5M' // Longer lock for manual intervention
+    lockDuration: 'PT5M' // Maximum allowed by Azure (5 minutes)
     maxDeliveryCount: 3
     deadLetteringOnMessageExpiration: true
     enableBatchedOperations: true
@@ -325,7 +326,7 @@ resource serviceBusSenderRole 'Microsoft.Authorization/roleAssignments@2022-04-0
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '69a216fc-b8fb-44d8-bc22-1f3c2cd27a39')
     principalId: principalId
-    principalType: 'ServicePrincipal'
+    // Don't specify principalType - let Azure auto-detect (User vs ServicePrincipal)
   }
 }
 
@@ -336,7 +337,7 @@ resource serviceBusReceiverRole 'Microsoft.Authorization/roleAssignments@2022-04
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4f6d3b9b-027b-4f4c-9142-0e5a2a2247e0')
     principalId: principalId
-    principalType: 'ServicePrincipal'
+    // Don't specify principalType - let Azure auto-detect (User vs ServicePrincipal)
   }
 }
 
